@@ -1,12 +1,12 @@
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Body
 from fastapi.security import OAuth2PasswordRequestForm
-from ..db.database import get_user_by_email, create_user, get_password_hash
+from ..db.database import get_user_by_email_cached, create_user, get_password_hash, purge_old_entries_from_cache
 from ..models.user import UserCreate, User
+from ..core.security import create_access_token, verify_password, get_current_user, purge_password_cache
 from ..core.config import settings
-from ..core.security import verify_password, create_access_token
 
-router = APIRouter()
+router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", response_model=dict, status_code=201, tags=["Authentication"])
 async def register(user_data: UserCreate = Body(..., description="Informations de l'utilisateur à créer")):
@@ -18,26 +18,41 @@ async def register(user_data: UserCreate = Body(..., description="Informations d
     - **full_name**: Nom complet
     
     Retourne les informations de l'utilisateur créé sans le mot de passe.
+    
+    Exemple de réponse:
+    ```json
+    {
+      "message": "Utilisateur créé avec succès",
+      "user": {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "email": "utilisateur@example.com",
+        "full_name": "Nom Complet",
+        "created_at": "2024-03-01T14:30:45.123456"
+      }
+    }
+    ```
     """
     try:
-        # Vérifier si l'email existe déjà
-        existing_user = get_user_by_email(user_data.email)
+        # Vérifier si l'email est déjà utilisé
+        existing_user = get_user_by_email_cached(user_data.email)
         if existing_user:
             raise HTTPException(status_code=400, detail="Email déjà utilisé")
-        
-        # Hashage du mot de passe
+            
+        # Créer le nouvel utilisateur
         hashed_password = get_password_hash(user_data.password)
         
-        # Préparation des données utilisateur
         user_dict = {
             "email": user_data.email,
             "hashed_password": hashed_password,
             "full_name": user_data.full_name
         }
         
-        # Création de l'utilisateur dans la base de données
         new_user = create_user(user_dict)
-        return {"message": "Utilisateur créé avec succès", "user": new_user}
+        
+        return {
+            "message": "Utilisateur créé avec succès",
+            "user": new_user
+        }
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -69,7 +84,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """
     try:
         # Recherche de l'utilisateur par email
-        user = get_user_by_email(form_data.username)
+        user = get_user_by_email_cached(form_data.username)
         if not user:
             raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
             
@@ -84,6 +99,10 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
             expires_delta=access_token_expires
         )
         
+        # Purger les caches périodiquement pour éviter les fuites mémoire
+        purge_old_entries_from_cache()
+        purge_password_cache()
+        
         return {
             "access_token": access_token,
             "token_type": "bearer",
@@ -92,18 +111,28 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+        raise HTTPException(status_code=500, detail=f"Erreur d'authentification: {str(e)}")
 
 @router.get("/me", response_model=dict, tags=["Authentication"])
-async def get_current_user_info(current_user: dict = Depends(verify_password)):
+async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     """
     Récupère les informations de l'utilisateur actuellement connecté.
     
     Cette route nécessite un token JWT valide et retourne les informations
     associées à l'utilisateur authentifié.
-    """
-    return {
-        "user_id": current_user["id"],
-        "email": current_user["email"],
-        "full_name": current_user["full_name"]
+    
+    Exemple de réponse:
+    ```json
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "email": "utilisateur@example.com",
+      "full_name": "Nom Complet",
+      "created_at": "2024-03-01T14:30:45.123456"
     }
+    ```
+    """
+    # Supprimer le mot de passe haché de la réponse
+    if "hashed_password" in current_user:
+        del current_user["hashed_password"]
+    
+    return current_user

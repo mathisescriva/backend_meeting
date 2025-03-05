@@ -1,109 +1,142 @@
-# Meeting Transcriber Backend
+# Meeting Transcriber API
 
-Une API FastAPI pour transcrire des enregistrements audio de réunions en texte, avec identification des interlocuteurs, en utilisant AssemblyAI.
+Une API FastAPI pour la transcription automatique de réunions audio en texte avec reconnaissance des locuteurs, utilisant AssemblyAI.
 
 ## Fonctionnalités
 
-- 🔐 **Authentification JWT** : Système sécurisé d'inscription et de connexion
-- 🎙️ **Transcription Audio** : Convertit les fichiers audio en texte avec identification des locuteurs
-- 📊 **Gestion des Réunions** : API complète pour créer, lire, mettre à jour et supprimer des réunions
-- 📄 **Documentation API** : Documentation interactive via Swagger UI
-- 🧪 **Tests Automatisés** : Tests unitaires et d'intégration
+- **Authentification sécurisée** - JWT avec optimisation des performances (mise en cache)
+- **Transcription audio** - Conversion MP3/WAV en texte avec identification des locuteurs
+- **API RESTful** - Interface API complète et documentée
+- **Documentation OpenAPI** - Documentation interactive via Swagger UI
+
+## Optimisations pour la Production
+
+Cette API a été optimisée pour une utilisation en production avec:
+
+- **Mise en cache** des vérifications de mot de passe et des données utilisateur fréquemment utilisées
+- **Pool de connexions** pour la base de données SQLite
+- **Gestion des erreurs** globale avec logging détaillé
+- **Limitation de débit** pour éviter les abus
+- **Configuration CORS** sécurisée
+- **Monitoring** des temps de réponse et détection des requêtes lentes
 
 ## Prérequis
 
 - Python 3.9+
-- [AssemblyAI API Key](https://www.assemblyai.com/) (pour la transcription)
+- AssemblyAI API Key
+- Environnement de déploiement (serveur Linux, Docker, etc.)
 
 ## Installation
 
+### Installation manuelle
+
 1. Cloner le dépôt :
 ```bash
-git clone https://github.com/username/meeting-transcriber-backend.git
+git clone https://github.com/votreuser/meeting-transcriber-backend.git
 cd meeting-transcriber-backend
 ```
 
-2. Créer et activer un environnement virtuel :
+2. Créer un environnement virtuel et installer les dépendances :
 ```bash
 python -m venv venv
-source venv/bin/activate  # Sur Windows : venv\Scripts\activate
-```
-
-3. Installer les dépendances :
-```bash
+source venv/bin/activate  # Sous Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Créer un fichier `.env` à la racine du projet :
-```
-ASSEMBLYAI_API_KEY=votre_cle_api_assemblyai
-JWT_SECRET_KEY=une_cle_secrete_aleatoire
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-```
-
-## Démarrage
-
-1. Lancer le serveur de développement :
+3. Créer un fichier `.env` à partir du modèle :
 ```bash
-uvicorn app.main:app --reload --port 8048
+cp .env.example .env
 ```
 
-2. Accéder à la documentation API :
-   - Documentation Swagger : http://localhost:8048/docs
-   - Documentation ReDoc : http://localhost:8048/redoc
+4. Éditer le fichier `.env` avec vos configurations
 
-## Tests
-
-Pour exécuter les tests automatisés :
-
+5. Lancer l'application :
 ```bash
-python -m pytest tests/
+./start_production.sh
 ```
 
-## Structure de l'API
+### Déploiement avec Docker
 
-### Authentification
-
-- `POST /auth/register` : Inscription d'un utilisateur
-- `POST /auth/login` : Connexion et obtention d'un token JWT
-
-### Gestion des Réunions
-
-- `POST /meetings/upload` : Téléchargement d'un fichier audio et création d'une réunion
-- `GET /meetings/` : Liste des réunions de l'utilisateur
-- `GET /meetings/{meeting_id}` : Détails d'une réunion spécifique
-- `PUT /meetings/{meeting_id}` : Mise à jour des métadonnées d'une réunion
-- `DELETE /meetings/{meeting_id}` : Suppression d'une réunion
-
-### Transcription
-
-- `POST /meetings/{meeting_id}/transcribe` : Relance la transcription d'une réunion
-- `GET /meetings/{meeting_id}/transcript` : Récupère uniquement la transcription d'une réunion
-
-## Intégration AssemblyAI
-
-Le service utilise l'API REST AssemblyAI v2 pour la transcription audio avec les fonctionnalités suivantes :
-
-- Identification des interlocuteurs (speaker labels)
-- Support multilingue (français par défaut)
-- Upload direct des fichiers vers AssemblyAI
-- Gestion asynchrone du processus de transcription
-
-## Déploiement en production
-
-Pour un déploiement en production, prenez en compte les points suivants :
-
-1. Utilisez un serveur WSGI comme Gunicorn :
+1. Créer un fichier `.env` à partir du modèle :
 ```bash
-gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker
+cp .env.example .env
 ```
 
-2. Sécurisez vos variables d'environnement
-3. Mettez en place une base de données robuste (PostgreSQL recommandé)
-4. Configurez les permissions de fichiers appropriées pour le stockage local
-5. Ajustez les paramètres CORS pour limiter l'accès aux domaines autorisés
+2. Éditer le fichier `.env` avec vos configurations
+
+3. Lancer l'application avec Docker Compose :
+```bash
+docker-compose up -d
+```
+
+## Structure du Projet
+
+```
+meeting-transcriber-backend/
+├── app/                      # Code principal
+│   ├── core/                 # Noyau de l'application
+│   │   ├── config.py         # Configuration
+│   │   └── security.py       # Sécurité et authentification
+│   ├── db/                   # Accès à la base de données
+│   │   └── database.py       # Fonctions de base de données
+│   ├── models/               # Modèles Pydantic
+│   │   └── user.py           # Modèle utilisateur
+│   │   └── meeting.py        # Modèles de réunions
+│   ├── routes/               # Routeurs API
+│   │   ├── auth.py           # Routes d'authentification
+│   │   └── meetings.py       # Routes de gestion des réunions
+│   ├── services/             # Services métier
+│   │   └── transcription.py  # Service de transcription
+│   └── main.py               # Point d'entrée de l'application
+├── uploads/                  # Répertoire pour stocker les fichiers
+├── tests/                    # Tests
+├── .env.example              # Exemple de fichier de configuration
+├── Dockerfile                # Configuration Docker
+├── docker-compose.yml        # Configuration Docker Compose
+├── nginx/                    # Configuration Nginx
+├── requirements.txt          # Dépendances Python
+├── start_production.sh       # Script de démarrage
+└── README.md                 # Documentation
+```
+
+## Variables d'Environnement
+
+| Variable | Description | Valeur par défaut |
+|----------|-------------|-------------------|
+| ENVIRONMENT | Environnement d'exécution | `development` |
+| JWT_SECRET | Clé secrète pour l'authentification JWT | (valeur générée) |
+| CORS_ORIGINS | Domaines autorisés pour CORS | `*` |
+| DB_POOL_SIZE | Taille du pool de connexions | `10` |
+| DB_POOL_TIMEOUT | Timeout pour les connexions | `30` |
+| HTTP_TIMEOUT | Timeout pour les requêtes HTTP | `30` |
+| ENABLE_CACHE | Activer le cache | `True` |
+| CACHE_TTL | Durée de vie du cache (secondes) | `300` |
+| LOG_LEVEL | Niveau de logging | `INFO` |
+| MAX_UPLOAD_SIZE | Taille maximale d'upload (bytes) | `100000000` |
+| ASSEMBLYAI_API_KEY | Clé API pour AssemblyAI | (requis) |
+| DEFAULT_LANGUAGE | Langue par défaut pour la transcription | `fr` |
+| SPEAKER_LABELS | Activer la reconnaissance des locuteurs | `True` |
+
+## Documentation API
+
+Lorsque l'application est en cours d'exécution, la documentation API est disponible aux adresses suivantes:
+
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
+
+## Surveillance et Maintenance
+
+### Logs
+
+Les logs sont disponibles:
+- En sortie standard lorsqu'exécuté directement
+- Dans les logs Docker lorsqu'exécuté via Docker: `docker-compose logs -f api`
+
+### Performance
+
+L'API inclut des en-têtes de performance qui peuvent être surveillés:
+- `X-Process-Time`: temps de traitement en secondes pour chaque requête
 
 ## Licence
 
-MIT
+Ce projet est sous licence MIT.
