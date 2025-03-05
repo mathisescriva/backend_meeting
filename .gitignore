@@ -56,3 +56,10 @@ htmlcov/
 
 # macOS
 .DS_Store
+
+# Credentials and sensitive files
+*credentials.json
+*firebase*credentials*.json
+firebase-*.json
+*-firebase-*.json
+secret*.json
