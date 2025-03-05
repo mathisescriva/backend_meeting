@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 from pathlib import Path
 
 from app.main import app
-from app.core.auth import create_access_token
-from app.db.models import User
+from app.core.security import create_access_token
+from app.models.user import User
 from app.core.config import settings
 
 # Configuration de test
