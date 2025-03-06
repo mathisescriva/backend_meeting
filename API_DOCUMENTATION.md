@@ -137,7 +137,9 @@ Liste toutes les réunions de l'utilisateur connecté.
     "file_url": "/uploads/2dafc076-4cbe-4000-b62e-60b8935746c4/20250306_101833_tmp3k1mtfw1.wav",
     "transcript_text": null,
     "transcript_status": "completed",
-    "created_at": "2025-03-06T09:18:33.313872"
+    "created_at": "2025-03-06T09:18:33.313872",
+    "duration_seconds": 300,
+    "speakers_count": 2
   }
 ]
 ```
@@ -160,7 +162,9 @@ Récupère les détails d'une réunion, y compris sa transcription.
   "file_url": "/uploads/2dafc076-4cbe-4000-b62e-60b8935746c4/20250306_101833_tmp3k1mtfw1.wav",
   "transcript_text": "Bonjour à tous, aujourd'hui nous allons discuter du projet X...",
   "transcript_status": "completed",
-  "created_at": "2025-03-06T09:18:33.313872"
+  "created_at": "2025-03-06T09:18:33.313872",
+  "duration_seconds": 300,
+  "speakers_count": 2
 }
 ```
 
@@ -186,7 +190,9 @@ Télécharge un fichier audio et lance sa transcription.
   "file_url": "/uploads/2dafc076-4cbe-4000-b62e-60b8935746c4/20250306_101833_tmp3k1mtfw1.wav",
   "transcript_text": null,
   "transcript_status": "pending",
-  "created_at": "2025-03-06T09:18:33.313872"
+  "created_at": "2025-03-06T09:18:33.313872",
+  "duration_seconds": null,
+  "speakers_count": null
 }
 ```
 
@@ -215,7 +221,9 @@ Met à jour les métadonnées d'une réunion.
   "file_url": "/uploads/2dafc076-4cbe-4000-b62e-60b8935746c4/20250306_101833_tmp3k1mtfw1.wav",
   "transcript_text": "Bonjour à tous, aujourd'hui nous allons discuter du projet X...",
   "transcript_status": "completed",
-  "created_at": "2025-03-06T09:18:33.313872"
+  "created_at": "2025-03-06T09:18:33.313872",
+  "duration_seconds": 300,
+  "speakers_count": 2
 }
 ```
 
@@ -266,7 +274,8 @@ Récupère uniquement la transcription d'une réunion.
 {
   "transcript_text": "Bonjour à tous, aujourd'hui nous allons discuter du projet X...",
   "transcript_status": "completed",
-  "meeting_id": "198868c7-ba07-402c-bbba-519f376b2471"
+  "duration_seconds": 300,
+  "speakers_count": 2
 }
 ```
 
@@ -290,7 +299,9 @@ Les statuts possibles pour une transcription sont :
   "file_url": "Chemin vers le fichier audio",
   "transcript_text": "Texte de la transcription (null si non terminée)",
   "transcript_status": "État de la transcription",
-  "created_at": "Date et heure de création"
+  "created_at": "Date et heure de création",
+  "duration_seconds": "Durée de la réunion en secondes",
+  "speakers_count": "Nombre de locuteurs"
 }
 ```
 

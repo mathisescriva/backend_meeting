@@ -13,6 +13,8 @@ class MeetingUpdate(BaseModel):
     title: Optional[str] = None
     transcript_text: Optional[str] = None
     transcript_status: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    speakers_count: Optional[int] = None
 
 class Meeting(MeetingBase):
     id: str
@@ -20,6 +22,8 @@ class Meeting(MeetingBase):
     transcript_text: Optional[str] = None
     transcript_status: Optional[str] = "pending"
     created_at: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    speakers_count: Optional[int] = None
 
     class Config:
         orm_mode = True

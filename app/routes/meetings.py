@@ -4,7 +4,7 @@ from ..core.security import get_current_user
 from ..models.user import User
 from ..models.meeting import Meeting, MeetingCreate, MeetingUpdate
 from ..db.firebase import upload_mp3
-from ..services.assemblyai import transcribe_meeting, convert_to_wav
+from ..services.assemblyai import transcribe_meeting, convert_to_wav, check_transcription_status
 from ..db.queries import create_meeting, get_meeting, get_meetings_by_user, update_meeting, delete_meeting
 from datetime import datetime
 from typing import List, Optional
@@ -128,10 +128,26 @@ async def get_meeting_route(
     Retourne toutes les informations de la réunion, y compris le texte de transcription
     si la transcription est terminée.
     """
+    # Log pour le debugging
+    logger.info(f"Attempting to get meeting with ID: {meeting_id} for user: {current_user['id']}")
+    
     meeting = get_meeting(meeting_id, current_user["id"])
     
     if not meeting:
-        raise HTTPException(status_code=404, detail="Réunion non trouvée")
+        logger.warning(f"Meeting not found - ID: {meeting_id}, User ID: {current_user['id']}")
+        raise HTTPException(
+            status_code=404, 
+            detail={
+                "message": "Réunion non trouvée",
+                "meeting_id": meeting_id,
+                "reason": "Cette réunion a peut-être été supprimée",
+                "type": "MEETING_NOT_FOUND"
+            }
+        )
+        
+    # Assurer que transcription_status est présent dans la réponse pour compatibilité frontend
+    if 'transcript_status' in meeting and 'transcription_status' not in meeting:
+        meeting['transcription_status'] = meeting['transcript_status']
         
     return meeting
 
@@ -210,28 +226,57 @@ async def transcribe_meeting_route(
     La transcription s'exécute de manière asynchrone et peut prendre du temps
     selon la durée de l'audio.
     """
+    # Vérifier que la réunion existe et appartient à l'utilisateur
     meeting = get_meeting(meeting_id, current_user["id"])
     
     if not meeting:
         raise HTTPException(status_code=404, detail="Réunion non trouvée")
     
-    # Vérifier si le fichier audio est accessible
-    file_url = meeting["file_url"]
+    # Vérifier si un transcript_id existe déjà
+    transcript_id = meeting.get("transcript_id")
+    
+    if transcript_id:
+        # Si le statut est "completed", pas besoin de relancer
+        if meeting.get("transcript_status") == "completed":
+            return meeting
+        
+        # Vérifier le statut actuel sur AssemblyAI
+        try:
+            status, text, duration, speakers_count = await check_transcription_status(transcript_id)
+            
+            if status == "completed" and text:
+                # Mettre à jour la base de données avec le texte de transcription
+                update_data = {
+                    "transcript_text": text,
+                    "transcript_status": "completed",
+                    "duration_seconds": duration,
+                    "speakers_count": speakers_count
+                }
+                updated_meeting = update_meeting(meeting_id, current_user["id"], update_data)
+                return updated_meeting
+        except Exception as e:
+            logger.error(f"Erreur lors de la vérification du statut: {str(e)}")
+            # Continuer pour relancer la transcription
+    
+    # Relancer la transcription
+    file_url = meeting.get("file_url")
+    
     if not file_url:
-        raise HTTPException(status_code=400, detail="Aucun fichier audio associé à cette réunion")
+        raise HTTPException(
+            status_code=400, 
+            detail="URL du fichier manquante"
+        )
     
-    # Mettre à jour le statut de transcription
-    update_meeting(meeting_id, current_user["id"], {"transcript_status": "pending"})
+    # Mettre à jour le statut
+    update_meeting(meeting_id, current_user["id"], {"transcript_status": "processing"})
     
-    try:
-        # Lancer la transcription en arrière-plan
-        transcribe_meeting(meeting_id, file_url, current_user["id"])
-        logger.info(f"Transcription relancée pour la réunion {meeting_id}")
-        return {"message": "Transcription relancée avec succès", "status": "pending"}
-    except Exception as e:
-        logger.error(f"Erreur lors du relancement de la transcription: {str(e)}")
-        update_meeting(meeting_id, current_user["id"], {"transcript_status": "error"})
-        raise HTTPException(status_code=500, detail=f"Erreur lors du relancement de la transcription: {str(e)}")
+    # Lancer la transcription en arrière-plan
+    transcribe_meeting(meeting_id, file_url, current_user["id"])
+    
+    # Obtenir la réunion mise à jour
+    updated_meeting = get_meeting(meeting_id, current_user["id"])
+    
+    return updated_meeting
 
 @router.get("/{meeting_id}/transcript", response_model=dict)
 async def get_transcript(
@@ -251,8 +296,54 @@ async def get_transcript(
     if not meeting:
         raise HTTPException(status_code=404, detail="Réunion non trouvée")
     
+    # Si la transcription est en cours ou terminée, retourner les informations
     return {
-        "transcript_text": meeting.get("transcript_text"),
-        "transcript_status": meeting.get("transcript_status", "unknown"),
-        "meeting_id": meeting_id
+        "transcript_text": meeting.get("transcript_text", ""),
+        "transcript_status": meeting.get("transcript_status", "pending"),
+        "duration_seconds": meeting.get("duration_seconds"),
+        "speakers_count": meeting.get("speakers_count")
+    }
+
+@router.post("/validate-ids", response_model=dict)
+async def validate_meeting_ids(
+    meeting_ids: List[str],
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Valide une liste d'identifiants de réunions et retourne les IDs qui existent encore.
+    
+    - **meeting_ids**: Liste des identifiants de réunions à vérifier
+    
+    Utile pour nettoyer le cache côté frontend après suppression de meetings.
+    """
+    from ..db.database import get_db_connection
+    
+    logger.info(f"Validating {len(meeting_ids)} meeting IDs for user: {current_user['id']}")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Préparer la requête SQL pour vérifier plusieurs IDs à la fois
+    placeholders = ','.join(['?'] * len(meeting_ids))
+    
+    # Ajouter l'ID de l'utilisateur à la liste des paramètres
+    params = meeting_ids + [current_user["id"]]
+    
+    cursor.execute(
+        f"SELECT id FROM meetings WHERE id IN ({placeholders}) AND user_id = ?", 
+        params
+    )
+    
+    existing_ids = [row["id"] for row in cursor.fetchall()]
+    
+    conn.close()
+    
+    # Calculer les IDs supprimés
+    deleted_ids = [id for id in meeting_ids if id not in existing_ids]
+    
+    logger.info(f"Found {len(existing_ids)} existing and {len(deleted_ids)} deleted meeting IDs")
+    
+    return {
+        "valid_ids": existing_ids,
+        "invalid_ids": deleted_ids
     }

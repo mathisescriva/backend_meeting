@@ -121,20 +121,33 @@ def _process_transcription(meeting_id: str, file_url: str, user_id: str):
                 
                 # Récupérer les informations sur les interlocuteurs si disponibles
                 utterances = transcript_response.get('utterances', [])
+                
+                # Extraire la durée de l'audio (en secondes)
+                audio_duration = transcript_response.get('audio_duration', 0)
+                
+                # Calculer le nombre unique de speakers
+                speakers_set = set()
                 if utterances:
                     # Formater le texte avec les interlocuteurs
                     formatted_text = []
                     for utterance in utterances:
                         speaker = utterance.get('speaker', 'Unknown')
+                        speakers_set.add(speaker)
                         text = utterance.get('text', '')
                         formatted_text.append(f"Speaker {speaker}: {text}")
                     
                     transcription_text = "\n".join(formatted_text)
                 
+                speakers_count = len(speakers_set)
+                
+                logger.info(f"Durée audio: {audio_duration} secondes, Nombre de participants: {speakers_count}")
+                
                 # Mettre à jour la base de données
                 update_data = {
                     "transcript_text": transcription_text,
-                    "transcript_status": "completed"
+                    "transcript_status": "completed",
+                    "duration_seconds": int(audio_duration) if audio_duration else None,
+                    "speakers_count": speakers_count if speakers_count > 0 else None
                 }
                 
                 update_meeting(meeting_id, user_id, update_data)
@@ -245,21 +258,30 @@ async def check_transcription_status(transcript_id: str, api_key: str = ASSEMBLY
                 # Récupérer le texte de transcription
                 transcript_text = transcript_response.get('text', '')
                 
+                # Récupérer la durée audio
+                audio_duration = transcript_response.get('audio_duration', 0)
+                
                 # Récupérer les informations sur les interlocuteurs si disponibles
                 utterances = transcript_response.get('utterances', [])
+                
+                # Calculer le nombre unique de speakers
+                speakers_set = set()
                 if utterances:
                     # Formater le texte avec les interlocuteurs
                     formatted_text = []
                     for utterance in utterances:
                         speaker = utterance.get('speaker', 'Unknown')
+                        speakers_set.add(speaker)
                         text = utterance.get('text', '')
                         formatted_text.append(f"Speaker {speaker}: {text}")
                     
                     transcript_text = "\n".join(formatted_text)
                 
-                return status, transcript_text
+                speakers_count = len(speakers_set)
+                
+                return status, transcript_text, int(audio_duration) if audio_duration else None, speakers_count if speakers_count > 0 else None
             
-            return status, None
+            return status, None, None, None
         else:
             error_msg = response.json().get('error', 'Unknown error')
             raise Exception(f"Échec de la vérification du statut: {error_msg} (status: {response.status_code})")
