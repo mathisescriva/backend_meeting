@@ -12,18 +12,18 @@ import os
 import tempfile
 import traceback
 
-router = APIRouter()
+router = APIRouter(prefix="/meetings", tags=["Réunions"])
 
-@router.post("/upload", response_model=dict, status_code=200, tags=["Réunions"])
+@router.post("/upload", response_model=dict, status_code=200)
 async def upload_meeting(
-    file: UploadFile = File(..., description="Fichier audio MP3 à transcrire"),
+    file: UploadFile = File(..., description="Fichier audio à transcrire"),
     title: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Télécharge un fichier audio MP3 et crée une nouvelle réunion avec transcription.
+    Télécharge un fichier audio et crée une nouvelle réunion avec transcription.
     
-    - **file**: Fichier audio au format MP3 uniquement
+    - **file**: Fichier audio au format MP3 ou WAV
     - **title**: Titre optionnel de la réunion (utilisera le nom du fichier par défaut)
     
     Le processus se déroule en plusieurs étapes:
@@ -36,11 +36,17 @@ async def upload_meeting(
     if not title:
         title = file.filename
         
-    if not file.filename.endswith('.mp3'):
-        raise HTTPException(status_code=400, detail="Le fichier doit être au format MP3")
+    # Vérifier le format du fichier
+    allowed_extensions = ['.mp3', '.wav']
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Le fichier doit être au format MP3 ou WAV. Format reçu : {file_ext}"
+        )
     
     # Utilise un fichier temporaire avec context manager
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
         try:
             # Sauvegarde le fichier uploadé
             content = await file.read()
@@ -89,7 +95,7 @@ async def upload_meeting(
                 logger.error(f"Error removing temp file: {str(e)}")
                 pass
 
-@router.get("/", response_model=List[dict], tags=["Réunions"])
+@router.get("/", response_model=List[dict])
 async def list_meetings(
     status: Optional[str] = Query(None, description="Filtrer par statut de transcription (pending, processing, completed, error)"),
     current_user: dict = Depends(get_current_user)
@@ -109,7 +115,7 @@ async def list_meetings(
         
     return meetings
 
-@router.get("/{meeting_id}", response_model=dict, tags=["Réunions"])
+@router.get("/{meeting_id}", response_model=dict)
 async def get_meeting_route(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
     current_user: dict = Depends(get_current_user)
@@ -129,7 +135,7 @@ async def get_meeting_route(
         
     return meeting
 
-@router.put("/{meeting_id}", response_model=dict, tags=["Réunions"])
+@router.put("/{meeting_id}", response_model=dict)
 async def update_meeting_route(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
     meeting_update: MeetingUpdate = ...,
@@ -157,7 +163,7 @@ async def update_meeting_route(
         
     return updated_meeting
 
-@router.delete("/{meeting_id}", response_model=dict, tags=["Réunions"])
+@router.delete("/{meeting_id}", response_model=dict)
 async def delete_meeting_route(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
     current_user: dict = Depends(get_current_user)
@@ -188,7 +194,7 @@ async def delete_meeting_route(
     
     return {"message": "Réunion supprimée avec succès"}
 
-@router.post("/{meeting_id}/transcribe", response_model=dict, tags=["Transcription"])
+@router.post("/{meeting_id}/transcribe", response_model=dict)
 async def transcribe_meeting_route(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
     current_user: dict = Depends(get_current_user)
@@ -227,7 +233,7 @@ async def transcribe_meeting_route(
         update_meeting(meeting_id, current_user["id"], {"transcript_status": "error"})
         raise HTTPException(status_code=500, detail=f"Erreur lors du relancement de la transcription: {str(e)}")
 
-@router.get("/{meeting_id}/transcript", response_model=dict, tags=["Transcription"])
+@router.get("/{meeting_id}/transcript", response_model=dict)
 async def get_transcript(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
     current_user: dict = Depends(get_current_user)

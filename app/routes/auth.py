@@ -5,8 +5,13 @@ from ..db.database import get_user_by_email_cached, create_user, get_password_ha
 from ..models.user import UserCreate, User
 from ..core.security import create_access_token, verify_password, get_current_user, purge_password_cache
 from ..core.config import settings
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 @router.post("/register", response_model=dict, status_code=201, tags=["Authentication"])
 async def register(user_data: UserCreate = Body(..., description="Informations de l'utilisateur à créer")):
@@ -90,6 +95,64 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
             
         # Vérification du mot de passe
         if not verify_password(form_data.password, user["hashed_password"]):
+            raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+            
+        # Création du token JWT
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user["id"]},  # Utiliser l'ID comme sujet du token
+            expires_delta=access_token_expires
+        )
+        
+        # Purger les caches périodiquement pour éviter les fuites mémoire
+        purge_old_entries_from_cache()
+        purge_password_cache()
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60  # Conversion en secondes
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur d'authentification: {str(e)}")
+
+@router.post("/login/json", response_model=dict, tags=["Authentication"])
+async def login_json(login_data: LoginRequest):
+    """
+    Authentifie un utilisateur via JSON et génère un token JWT.
+    
+    - **email**: Adresse email de l'utilisateur
+    - **password**: Mot de passe de l'utilisateur
+    
+    Retourne un token d'accès JWT avec sa durée de validité.
+    
+    Exemple de requête:
+    ```json
+    {
+      "email": "user@example.com",
+      "password": "secure_password"
+    }
+    ```
+    
+    Exemple de réponse:
+    ```json
+    {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "token_type": "bearer",
+      "expires_in": 1800
+    }
+    ```
+    """
+    try:
+        # Recherche de l'utilisateur par email
+        user = get_user_by_email_cached(login_data.email)
+        if not user:
+            raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+            
+        # Vérification du mot de passe
+        if not verify_password(login_data.password, user["hashed_password"]):
             raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
             
         # Création du token JWT

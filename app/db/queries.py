@@ -58,15 +58,26 @@ def get_meetings_by_user(user_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute(
-        "SELECT * FROM meetings WHERE user_id = ? ORDER BY created_at DESC", 
-        (user_id,)
-    )
-    meetings = cursor.fetchall()
-    
-    conn.close()
-    
-    return [dict(m) for m in meetings]
+    try:
+        cursor.execute(
+            "SELECT * FROM meetings WHERE user_id = ? ORDER BY created_at DESC", 
+            (user_id,)
+        )
+        meetings = cursor.fetchall()
+        
+        # Convertir les résultats en dictionnaires et renommer transcript_status en transcription_status
+        result = []
+        for m in meetings:
+            meeting_dict = dict(m)
+            meeting_dict['transcription_status'] = meeting_dict.get('transcript_status', 'pending')
+            result.append(meeting_dict)
+        
+        return result
+    except Exception as e:
+        print(f"Error fetching meetings: {str(e)}")
+        return []
+    finally:
+        conn.close()
 
 def update_meeting(meeting_id, user_id, update_data):
     """Mettre à jour une réunion"""
