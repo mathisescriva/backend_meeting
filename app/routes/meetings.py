@@ -30,7 +30,7 @@ async def upload_meeting(
     Le processus se déroule en plusieurs étapes:
     1. Upload du fichier
     2. Création d'une entrée dans la base de données
-    3. Démarrage asynchrone de la transcription via AssemblyAI
+    3. Démarrage synchrone de la transcription via AssemblyAI
     
     La transcription peut prendre du temps en fonction de la durée de l'audio.
     """
@@ -82,8 +82,15 @@ async def upload_meeting(
             }
             meeting = create_meeting(meeting_data, current_user["id"])
             
-            # Lancer la transcription de manière asynchrone
-            transcribe_meeting(meeting["id"], file_url, current_user["id"])
+            # Lancer la transcription de manière synchrone avec logs détaillés
+            logger.info(f"Lancement de la transcription pour la réunion {meeting['id']}")
+            try:
+                transcribe_meeting(meeting["id"], file_url, current_user["id"])
+                logger.info(f"Transcription lancée avec succès pour la réunion {meeting['id']}")
+            except Exception as e:
+                logger.error(f"Erreur lors du lancement de la transcription: {str(e)}")
+                logger.error(traceback.format_exc())
+                # Ne pas faire échouer la requête, juste logger l'erreur
             
             return meeting
             

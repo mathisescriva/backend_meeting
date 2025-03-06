@@ -6,7 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 from ..core.config import settings
-from ..db.queries import update_meeting
+from ..db.queries import update_meeting, get_meeting
 from fastapi.logger import logger
 
 # API endpoints and key
@@ -55,18 +55,53 @@ def transcribe_meeting(meeting_id: str, file_url: str, user_id: str):
     Transcrit un fichier audio et met à jour la base de données avec les résultats.
     Cette fonction est exécutée dans un thread séparé.
     """
-    # Lancer dans un thread pour éviter de bloquer
-    thread = threading.Thread(
-        target=_process_transcription,
-        args=(meeting_id, file_url, user_id)
-    )
-    thread.daemon = True
-    thread.start()
+    try:
+        # Vérifier si le meeting existe toujours avant de lancer la transcription
+        meeting = get_meeting(meeting_id, user_id)
+        if not meeting:
+            logger.error(f"Tentative de transcription d'une réunion qui n'existe pas ou plus: {meeting_id}")
+            return
+            
+        # Vérifier si le fichier existe avant de lancer la transcription
+        if file_url.startswith("/uploads/"):
+            file_path = settings.UPLOADS_DIR.parent / file_url.lstrip('/')
+            if not os.path.exists(file_path):
+                logger.error(f"Fichier audio introuvable pour la transcription: {file_path}")
+                # Mettre à jour le statut en "error"
+                update_meeting(meeting_id, user_id, {
+                    "transcript_status": "error",
+                    "transcript_text": "Le fichier audio est introuvable."
+                })
+                return
+                
+        # Lancer dans un thread pour éviter de bloquer
+        logger.info(f"Création d'un thread pour la transcription de la réunion {meeting_id}")
+        thread = threading.Thread(
+            target=_process_transcription,
+            args=(meeting_id, file_url, user_id)
+        )
+        # Définir comme non-daemon pour qu'il continue à s'exécuter même si le thread principal se termine
+        thread.daemon = False
+        thread.start()
+        logger.info(f"Thread de transcription lancé pour la réunion {meeting_id}")
+        
+    except Exception as e:
+        logger.error(f"Erreur lors du lancement de la transcription pour {meeting_id}: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # Mettre à jour le statut en "error"
+        try:
+            update_meeting(meeting_id, user_id, {
+                "transcript_status": "error",
+                "transcript_text": f"Erreur lors du lancement de la transcription: {str(e)}"
+            })
+        except Exception as update_error:
+            logger.error(f"Impossible de mettre à jour le statut en erreur: {str(update_error)}")
     
 def _process_transcription(meeting_id: str, file_url: str, user_id: str):
     """Fonction interne pour traiter la transcription de manière asynchrone"""
     try:
-        logger.info(f"Démarrage de la transcription pour la réunion {meeting_id}")
+        logger.info(f"[Thread #{threading.get_ident()}] Démarrage de la transcription pour la réunion {meeting_id}")
         
         # Mettre à jour le statut en "processing"
         update_meeting(meeting_id, user_id, {"transcript_status": "processing"})
