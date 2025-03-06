@@ -66,13 +66,17 @@ def get_pending_transcriptions(max_age_hours=24):
     cursor.close()
     return [dict(meeting) for meeting in meetings]
 
-def update_meeting_status(meeting_id, user_id, status, text=None):
+def update_meeting_status(meeting_id, user_id, status, text=None, duration_seconds=None, speakers_count=None):
     """Met à jour le statut et le texte de transcription d'une réunion"""
     cursor = conn.cursor()
     try:
         update_data = {"transcript_status": status}
         if text is not None:
             update_data["transcript_text"] = text
+        if duration_seconds is not None:
+            update_data["duration_seconds"] = duration_seconds
+        if speakers_count is not None:
+            update_data["speakers_count"] = speakers_count
             
         placeholders = ", ".join([f"{k} = ?" for k in update_data.keys()])
         values = list(update_data.values())
@@ -170,23 +174,44 @@ def process_transcription(meeting):
                 # Récupérer le texte avec mise en forme par interlocuteur
                 transcript_text = transcript_response.get('text', '')
                 
+                # Extraire la durée de l'audio (en secondes)
+                audio_duration = transcript_response.get('audio_duration', 0)
+                
                 # Si des informations par interlocuteur sont disponibles
                 utterances = transcript_response.get('utterances', [])
+                speakers_set = set()
+                
                 if utterances:
                     transcript_text = ""
                     for utterance in utterances:
                         speaker = utterance.get('speaker', 'Speaker')
+                        speakers_set.add(speaker)
                         text = utterance.get('text', '')
                         if text:
                             transcript_text += f"{speaker}: {text}\n"
                 
-                logger.info("Transcription terminée avec succès")
-                update_meeting_status(meeting_id, user_id, "completed", transcript_text)
+                # Calculer le nombre de participants
+                speakers_count = len(speakers_set) if speakers_set else None
+                
+                logger.info(f"Transcription terminée avec succès. Durée: {audio_duration}s, Participants: {speakers_count}")
+                update_meeting_status(
+                    meeting_id, 
+                    user_id, 
+                    "completed", 
+                    transcript_text,
+                    int(audio_duration) if audio_duration else None,
+                    speakers_count
+                )
                 return True
             elif status == "error":
                 error_message = transcript_response.get('error', 'Unknown error')
                 logger.error(f"Transcription terminée avec erreur: {error_message}")
-                update_meeting_status(meeting_id, user_id, "error", f"Erreur lors de la transcription: {error_message}")
+                update_meeting_status(
+                    meeting_id, 
+                    user_id, 
+                    "error", 
+                    f"Erreur lors de la transcription: {error_message}"
+                )
                 return False
             
             # Attendre plus longtemps entre les tentatives
