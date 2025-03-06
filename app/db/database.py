@@ -60,7 +60,7 @@ class ConnectionPool:
             self.in_use = set()
 
 # Créer un pool de connexions global
-db_pool = ConnectionPool(DB_PATH)
+db_pool = ConnectionPool(DB_PATH, max_connections=50, timeout=60)
 
 def get_password_hash(password: str) -> str:
     """Hash a password using bcrypt"""
@@ -74,6 +74,13 @@ def get_db_connection():
 def release_db_connection(conn):
     """Libérer une connexion pour la réutiliser"""
     db_pool.release_connection(conn)
+
+def reset_db_pool():
+    """Réinitialiser le pool de connexions en cas de problème"""
+    global db_pool
+    db_pool.close_all()
+    db_pool = ConnectionPool(DB_PATH, max_connections=50, timeout=60)
+    return True
 
 def init_db():
     """Initialiser la base de données avec les tables nécessaires"""

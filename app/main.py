@@ -70,10 +70,17 @@ async def add_process_time_header(request: Request, call_next):
 # Gestionnaire d'exception global
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Erreur non gérée: {str(exc)}", exc_info=True)
+    logger.error(f"Exception non gérée: {exc}")
+    
+    # Réinitialiser le pool de connexions en cas d'erreur de connexion à la base de données
+    if isinstance(exc, TimeoutError) and "connexion à la base de données" in str(exc):
+        from .db.database import reset_db_pool
+        reset_db_pool()
+        logger.warning("Pool de connexions réinitialisé suite à une erreur de connexion")
+    
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "Une erreur interne s'est produite. Veuillez réessayer."},
+        content={"detail": str(exc)},
     )
 
 # Configuration CORS

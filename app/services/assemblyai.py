@@ -3,6 +3,7 @@ import time
 import threading
 import os
 import json
+import subprocess
 from pathlib import Path
 from ..core.config import settings
 from ..db.queries import update_meeting
@@ -11,6 +12,43 @@ from fastapi.logger import logger
 # API endpoints and key
 ASSEMBLY_AI_API_KEY = settings.ASSEMBLYAI_API_KEY
 ASSEMBLY_AI_API_URL = 'https://api.assemblyai.com/v2'
+
+def convert_to_wav(input_path: str) -> str:
+    """Convertit un fichier audio en WAV en utilisant ffmpeg"""
+    try:
+        # Créer un nom de fichier de sortie avec l'extension .wav
+        output_path = os.path.splitext(input_path)[0] + '_converted.wav'
+        
+        # Commande ffmpeg pour convertir en WAV
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-acodec', 'pcm_s16le',  # Format PCM 16-bit
+            '-ar', '44100',          # Sample rate 44.1kHz
+            '-ac', '2',              # 2 canaux (stéréo)
+            '-y',                    # Écraser le fichier de sortie s'il existe
+            output_path
+        ]
+        
+        logger.info(f"Conversion du fichier audio: {' '.join(cmd)}")
+        
+        # Exécuter la commande
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            logger.error(f"Erreur lors de la conversion: {result.stderr}")
+            raise Exception(f"Échec de la conversion audio: {result.stderr}")
+        
+        # Vérifier que le fichier de sortie existe et a une taille non nulle
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            logger.error(f"Le fichier converti n'existe pas ou est vide: {output_path}")
+            raise Exception("Le fichier converti n'existe pas ou est vide")
+            
+        logger.info(f"Conversion réussie: {output_path}")
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"Erreur lors de la conversion audio: {str(e)}")
+        raise Exception(f"Échec de la conversion audio: {str(e)}")
 
 def transcribe_meeting(meeting_id: str, file_url: str, user_id: str):
     """
@@ -42,6 +80,13 @@ def _process_transcription(meeting_id: str, file_url: str, user_id: str):
             
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"Fichier audio introuvable: {file_path}")
+            
+            # Convertir le fichier en WAV si nécessaire
+            file_ext = os.path.splitext(file_path)[1].lower()
+            if file_ext != '.wav':
+                logger.info("Conversion du fichier en WAV...")
+                file_path = convert_to_wav(str(file_path))
+                logger.info(f"Fichier converti : {file_path}")
                 
             logger.info(f"Upload du fichier local vers AssemblyAI: {file_path}")
             
@@ -229,18 +274,48 @@ def _upload_file_to_assemblyai(file_path: str):
         "authorization": ASSEMBLY_AI_API_KEY
     }
     
-    with open(file_path, 'rb') as f:
+    try:
+        logger.info(f"Tentative d'upload du fichier: {file_path}")
+        logger.info(f"Taille du fichier: {os.path.getsize(file_path)} bytes")
+        logger.info(f"Headers: {headers}")
+        
+        # Vérifier le type MIME du fichier
+        import magic
+        mime = magic.Magic(mime=True)
+        file_mime = mime.from_file(file_path)
+        logger.info(f"Type MIME du fichier: {file_mime}")
+        
+        def read_file(filename):
+            with open(filename, 'rb') as _file:
+                while True:
+                    data = _file.read(5242880)  # Lire par chunks de 5MB
+                    if not data:
+                        break
+                    yield data
+        
+        # Envoyer la requête avec les données en streaming
+        logger.info("Début de l'upload en streaming...")
         response = requests.post(
             upload_endpoint,
             headers=headers,
-            data=f
+            data=read_file(file_path)
         )
         
-    if response.status_code == 200:
-        return response.json()["upload_url"]
-    else:
-        error_msg = response.json().get('error', 'Unknown error')
-        raise Exception(f"Échec de l'upload du fichier: {error_msg} (status: {response.status_code})")
+        logger.info(f"Réponse AssemblyAI - Status: {response.status_code}")
+        logger.info(f"Réponse AssemblyAI - Headers: {dict(response.headers)}")
+        logger.info(f"Réponse AssemblyAI - Content: {response.text}")
+        
+        if response.status_code == 200:
+            upload_url = response.json()["upload_url"]
+            logger.info(f"Upload réussi, URL: {upload_url}")
+            return upload_url
+        else:
+            error_msg = response.json().get('error', 'Unknown error')
+            logger.error(f"Échec de l'upload - Status: {response.status_code}, Error: {error_msg}")
+            raise Exception(f"Échec de l'upload du fichier: {error_msg} (status: {response.status_code})")
+    except Exception as e:
+        logger.error(f"Exception lors de l'upload: {str(e)}")
+        raise Exception(f"Échec de l'upload du fichier à AssemblyAI: {str(e)}")
 
 def _start_transcription_assemblyai(audio_url: str):
     """Démarre une transcription sur AssemblyAI"""

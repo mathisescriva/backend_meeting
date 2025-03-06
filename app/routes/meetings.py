@@ -4,13 +4,14 @@ from ..core.security import get_current_user
 from ..models.user import User
 from ..models.meeting import Meeting, MeetingCreate, MeetingUpdate
 from ..db.firebase import upload_mp3
-from ..services.assemblyai import transcribe_meeting
+from ..services.assemblyai import transcribe_meeting, convert_to_wav
 from ..db.queries import create_meeting, get_meeting, get_meetings_by_user, update_meeting, delete_meeting
 from datetime import datetime
 from typing import List, Optional
 import os
 import tempfile
 import traceback
+import subprocess
 
 router = APIRouter(prefix="/meetings", tags=["Réunions"])
 
@@ -36,64 +37,63 @@ async def upload_meeting(
     if not title:
         title = file.filename
         
-    # Vérifier le format du fichier
-    allowed_extensions = ['.mp3', '.wav']
-    file_ext = os.path.splitext(file.filename)[1].lower()
-    if file_ext not in allowed_extensions:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Le fichier doit être au format MP3 ou WAV. Format reçu : {file_ext}"
-        )
-    
-    # Utilise un fichier temporaire avec context manager
-    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+    # Créer un dossier temporaire pour la conversion
+    with tempfile.TemporaryDirectory() as temp_dir:
         try:
-            # Sauvegarde le fichier uploadé
-            content = await file.read()
-            tmp_file.write(content)
-            tmp_file.flush()  # Force l'écriture sur le disque
+            # Sauvegarder le fichier original
+            temp_input = os.path.join(temp_dir, "input" + os.path.splitext(file.filename)[1])
+            with open(temp_input, "wb") as f:
+                content = await file.read()
+                f.write(content)
             
-            # Upload vers le stockage local
-            try:
-                file_url = upload_mp3(tmp_file.name, current_user["id"])
-                logger.info(f"File uploaded successfully: {file_url}")
-            except Exception as e:
-                logger.error(f"Error uploading file: {str(e)}\n{traceback.format_exc()}")
-                raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
+            # Vérifier le format du fichier
+            file_info = subprocess.run(['file', temp_input], capture_output=True, text=True)
+            logger.info(f"Type de fichier détecté: {file_info.stdout}")
             
-            # Création meeting en base
+            # Toujours convertir en WAV pour s'assurer de la compatibilité
+            logger.info(f"Conversion du fichier {temp_input} en WAV...")
+            temp_output = convert_to_wav(temp_input)
+            
+            # Vérifier que le fichier converti est bien un WAV
+            file_info = subprocess.run(['file', temp_output], capture_output=True, text=True)
+            logger.info(f"Type de fichier après conversion: {file_info.stdout}")
+            
+            if "WAVE" not in file_info.stdout and "WAV" not in file_info.stdout:
+                raise Exception(f"Le fichier n'a pas été correctement converti en WAV: {file_info.stdout}")
+            
+            # Créer le dossier de destination s'il n'existe pas
+            user_upload_dir = os.path.join("uploads", str(current_user["id"]))
+            os.makedirs(user_upload_dir, exist_ok=True)
+            
+            # Générer un nom de fichier unique
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{timestamp}_tmp{next(tempfile._get_candidate_names())}.wav"
+            final_path = os.path.join(user_upload_dir, filename)
+            
+            # Copier le fichier WAV vers sa destination finale
+            with open(temp_output, "rb") as src, open(final_path, "wb") as dst:
+                dst.write(src.read())
+            
+            # Créer l'entrée dans la base de données
+            file_url = f"/{final_path}"
             meeting_data = {
-                "title": title or file.filename,
+                "title": title,
                 "file_url": file_url
             }
+            meeting = create_meeting(meeting_data, current_user["id"])
             
-            # Utilisation de SQLite pour insérer en base
-            new_meeting = create_meeting(meeting_data, current_user["id"])
+            # Lancer la transcription de manière asynchrone
+            transcribe_meeting(meeting["id"], file_url, current_user["id"])
             
-            if not new_meeting:
-                raise HTTPException(status_code=500, detail="Erreur lors de la création de la réunion")
-                
-            # Lancer la transcription en arrière-plan
-            try:
-                transcribe_meeting(new_meeting["id"], file_url, current_user["id"])
-                logger.info(f"Transcription démarrée pour la réunion {new_meeting['id']}")
-            except Exception as e:
-                logger.error(f"Erreur lors du démarrage de la transcription: {str(e)}")
-                # Ne pas bloquer l'utilisateur si la transcription échoue
-                update_meeting(new_meeting["id"], current_user["id"], {"transcript_status": "error"})
-            
-            return new_meeting
+            return meeting
             
         except Exception as e:
-            logger.error(f"Error uploading meeting: {str(e)}\n{traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"Error uploading meeting: {str(e)}")
-        finally:
-            # Supprime le fichier temporaire
-            try:
-                os.unlink(tmp_file.name)
-            except Exception as e:
-                logger.error(f"Error removing temp file: {str(e)}")
-                pass
+            logger.error(f"Erreur lors de l'upload: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail=f"Une erreur s'est produite lors de l'upload: {str(e)}"
+            )
 
 @router.get("/", response_model=List[dict])
 async def list_meetings(
