@@ -12,6 +12,9 @@ def create_meeting(meeting_data, user_id):
         meeting_id = str(uuid.uuid4())
         created_at = datetime.utcnow().isoformat()
         
+        # Utiliser le statut fourni ou 'pending' par défaut
+        transcript_status = meeting_data.get("transcript_status", "pending")
+        
         cursor.execute(
             """
             INSERT INTO meetings (
@@ -24,7 +27,7 @@ def create_meeting(meeting_data, user_id):
                 user_id, 
                 meeting_data["title"], 
                 meeting_data["file_url"], 
-                "pending", 
+                transcript_status, 
                 created_at
             )
         )
@@ -91,39 +94,41 @@ def get_meetings_by_user(user_id):
     finally:
         release_db_connection(conn)
 
-def update_meeting(meeting_id, user_id, update_data):
+def update_meeting(meeting_id: str, user_id: str, update_data: dict):
     """Mettre à jour une réunion"""
-    conn = get_db_connection()
     try:
+        # Construire la requête de mise à jour
+        query = "UPDATE meetings SET "
+        values = []
+        params = []
+        for key, value in update_data.items():
+            query += f"{key} = ?, "
+            values.append(value)
+        
+        # Supprimer la dernière virgule et ajouter la condition WHERE
+        query = query.rstrip(", ") + " WHERE id = ? AND user_id = ?"
+        values.extend([meeting_id, user_id])
+        
+        # Exécuter la requête
+        conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Vérifier que la réunion existe et appartient à l'utilisateur
-        cursor.execute(
-            "SELECT id FROM meetings WHERE id = ? AND user_id = ?", 
-            (meeting_id, user_id)
-        )
-        existing = cursor.fetchone()
-        
-        if not existing:
-            return None
-        
-        # Construire la requête de mise à jour dynamiquement
-        set_clause = ', '.join([f"{key} = ?" for key in update_data.keys()])
-        values = list(update_data.values())
-        values.append(meeting_id)
-        
-        cursor.execute(
-            f"UPDATE meetings SET {set_clause} WHERE id = ?",
-            values
-        )
-        
+        cursor.execute(query, values)
         conn.commit()
         
-        # Récupérer la réunion mise à jour
-        cursor.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
-        meeting = cursor.fetchone()
+        # Log de la mise à jour
+        print(f"DB Update: Meeting {meeting_id} updated with data: {update_data}")
         
-        return dict(meeting) if meeting else None
+        # Vérifier si la mise à jour a été effectuée
+        if cursor.rowcount == 0:
+            print(f"DB Warning: No rows updated for meeting {meeting_id}")
+            return False
+            
+        return True
+    except Exception as e:
+        print(f"DB Error: Failed to update meeting {meeting_id}: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return False
     finally:
         release_db_connection(conn)
 
@@ -154,5 +159,27 @@ def delete_meeting(meeting_id, user_id):
         conn.commit()
         
         return file_url
+    finally:
+        release_db_connection(conn)
+
+def get_pending_transcriptions(max_age_hours=24):
+    """Récupère les transcriptions en attente qui ne sont pas trop anciennes"""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        from datetime import datetime, timedelta
+        
+        cutoff_date = datetime.now() - timedelta(hours=max_age_hours)
+        cutoff_date_str = cutoff_date.strftime("%Y-%m-%dT%H:%M:%S")
+        
+        cursor.execute(
+            "SELECT id, title, user_id, file_url, transcript_status, created_at FROM meetings " +
+            "WHERE transcript_status IN ('pending', 'processing') AND created_at > ? " +
+            "ORDER BY created_at ASC",
+            (cutoff_date_str,)
+        )
+        
+        meetings = cursor.fetchall()
+        return [dict(meeting) for meeting in meetings]
     finally:
         release_db_connection(conn)

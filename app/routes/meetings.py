@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Path, Query
 from fastapi.logger import logger
-from fastapi.responses import FileResponse
 from ..core.security import get_current_user
 from ..models.user import User
 from ..models.meeting import Meeting, MeetingCreate, MeetingUpdate
 from ..db.firebase import upload_mp3
-from ..services.assemblyai import transcribe_meeting, convert_to_wav
+from ..services.assemblyai import transcribe_meeting, convert_to_wav, check_transcription_status, _process_transcription_wrapper
 from ..db.queries import create_meeting, get_meeting, get_meetings_by_user, update_meeting, delete_meeting
 from datetime import datetime
 from typing import List, Optional
@@ -13,6 +12,7 @@ import os
 import tempfile
 import traceback
 import subprocess
+import threading
 
 router = APIRouter(prefix="/meetings", tags=["Réunions"])
 
@@ -75,19 +75,31 @@ async def upload_meeting(
             with open(temp_output, "rb") as src, open(final_path, "wb") as dst:
                 dst.write(src.read())
             
-            # Créer l'entrée dans la base de données
+            # Créer l'entrée dans la base de données avec le statut "processing" dès le début
             file_url = f"/{final_path}"
             meeting_data = {
                 "title": title,
-                "file_url": file_url
+                "file_url": file_url,
+                "transcript_status": "processing"  
             }
             meeting = create_meeting(meeting_data, current_user["id"])
             
-            # Lancer la transcription de manière synchrone avec logs détaillés
+            # Lancer la transcription de manière asynchrone avec logs détaillés
             logger.info(f"Lancement de la transcription pour la réunion {meeting['id']}")
             try:
-                transcribe_meeting(meeting["id"], file_url, current_user["id"])
-                logger.info(f"Transcription lancée avec succès pour la réunion {meeting['id']}")
+                # Utiliser _process_transcription_wrapper directement pour un traitement immédiat
+                # au lieu de transcribe_meeting qui met simplement en file d'attente
+                from ..services.assemblyai import _process_transcription_wrapper
+                
+                # Créer un thread et exécuter immédiatement - utiliser le wrapper qui gère les exceptions
+                transcription_thread = threading.Thread(
+                    target=_process_transcription_wrapper,
+                    args=(meeting["id"], file_url, current_user["id"], None)
+                )
+                transcription_thread.daemon = False  # Permet au thread de continuer même si le serveur s'arrête
+                transcription_thread.start()
+                
+                logger.info(f"Transcription lancée directement pour la réunion {meeting['id']}")
             except Exception as e:
                 logger.error(f"Erreur lors du lancement de la transcription: {str(e)}")
                 logger.error(traceback.format_exc())
@@ -311,43 +323,6 @@ async def get_transcript(
         "duration_seconds": meeting.get("duration_seconds"),
         "speakers_count": meeting.get("speakers_count")
     }
-
-@router.get("/{meeting_id}/audio", response_class=FileResponse)
-async def download_meeting_audio(
-    meeting_id: str = Path(..., description="ID unique de la réunion"),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Télécharge le fichier audio associé à une réunion.
-    
-    - **meeting_id**: Identifiant unique de la réunion
-    
-    Cette route permet de télécharger le fichier audio original de la réunion
-    pour écouter l'enregistrement.
-    """
-    # Vérifier que la réunion existe et appartient à l'utilisateur
-    meeting = get_meeting(meeting_id, current_user["id"])
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Réunion non trouvée")
-    
-    # Récupérer le chemin du fichier audio
-    file_url = meeting.get("file_url")
-    if not file_url:
-        raise HTTPException(status_code=404, detail="Fichier audio non trouvé")
-    
-    # Le file_url commence par un /, on le retire
-    file_path = file_url[1:] if file_url.startswith("/") else file_url
-    
-    # Vérifier que le fichier existe
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Fichier audio non trouvé sur le serveur")
-    
-    # Renvoyer le fichier
-    return FileResponse(
-        file_path, 
-        media_type="audio/wav",
-        filename=f"meeting_{meeting_id}.wav"
-    )
 
 @router.post("/validate-ids", response_model=dict)
 async def validate_meeting_ids(

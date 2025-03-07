@@ -1,0 +1,21 @@
+[Unit]
+Description=Meeting Transcriber Queue Processor
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/path/to/MeetingTranscriberBackend
+ExecStart=/usr/bin/python3 /path/to/MeetingTranscriberBackend/process_transcription_queue.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/var/log/transcription-queue.log
+StandardError=append:/var/log/transcription-queue.log
+
+# Options de sécurité
+PrivateTmp=true
+ProtectSystem=full
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

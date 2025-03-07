@@ -15,7 +15,6 @@
    - [Supprimer une réunion](#supprimer-une-réunion)
    - [Relancer une transcription](#relancer-une-transcription)
    - [Récupérer uniquement la transcription](#récupérer-uniquement-la-transcription)
-   - [Télécharger le fichier audio](#télécharger-le-fichier-audio)
 4. [Gestion du profil utilisateur](#gestion-du-profil-utilisateur)
    - [Obtenir les informations de profil](#obtenir-les-informations-de-profil)
    - [Mettre à jour le profil](#mettre-à-jour-le-profil)
@@ -284,22 +283,6 @@ Récupère uniquement la transcription d'une réunion.
   "speakers_count": 2
 }
 ```
-
-### Télécharger le fichier audio
-
-Télécharge le fichier audio original associé à une réunion.
-
-**URL** : `/meetings/{meeting_id}/audio`  
-**Méthode** : `GET`  
-**Authentification requise** : Oui  
-
-**Réponse** : Fichier audio au format WAV
-
-**Statut** : 200 OK, 404 Not Found
-
-**Notes** : 
-- Cette route retourne directement le fichier audio, prêt à être écouté ou téléchargé
-- Le fichier sera renvoyé avec un nom au format `meeting_{meeting_id}.wav`
 
 ## Gestion du profil utilisateur
 

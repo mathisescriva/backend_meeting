@@ -67,6 +67,33 @@ def get_pending_transcriptions(max_age_hours=24):
     cursor.close()
     return [dict(meeting) for meeting in meetings]
 
+def check_stalled_transcriptions():
+    """Vérifie s'il y a des transcriptions bloquées en statut 'processing' depuis trop longtemps"""
+    cursor = conn.cursor()
+    # Considérer comme bloquée après 30 minutes en statut 'processing'
+    stalled_cutoff = datetime.now() - timedelta(minutes=30)
+    stalled_cutoff_str = stalled_cutoff.strftime("%Y-%m-%dT%H:%M:%S")
+    
+    cursor.execute(
+        "SELECT id, title, user_id, file_url, transcript_status, created_at FROM meetings " +
+        "WHERE transcript_status = 'processing' AND created_at < ? " +
+        "ORDER BY created_at ASC",
+        (stalled_cutoff_str,)
+    )
+    
+    meetings = cursor.fetchall()
+    cursor.close()
+    
+    if meetings:
+        logger.warning(f"Détecté {len(meetings)} transcription(s) bloquée(s) en statut 'processing'")
+        for meeting in meetings:
+            meeting_dict = dict(meeting)
+            logger.warning(f"Réinitialisation de la transcription bloquée: {meeting_dict['id']} - {meeting_dict['title']}")
+            # Réinitialiser au statut 'pending' pour retenter
+            update_meeting_status(meeting_dict['id'], meeting_dict['user_id'], 'pending')
+    
+    return [dict(meeting) for meeting in meetings]
+
 def update_meeting_status(meeting_id, user_id, status, text=None, duration_seconds=None, speakers_count=None):
     """Met à jour le statut et le texte de transcription d'une réunion"""
     cursor = conn.cursor()
@@ -240,39 +267,47 @@ def process_transcription(meeting):
 
 def main(single_run=False, check_interval=60):
     """Fonction principale qui vérifie régulièrement les transcriptions en attente"""
-    logger.info("Démarrage du service de transcription")
-    
     try:
+        if single_run:
+            logger.info("Mode exécution unique activé")
+        else:
+            logger.info(f"Mode service activé (intervalle de vérification: {check_interval}s)")
+        
         while True:
-            # Récupérer les transcriptions en attente
-            pending_transcriptions = get_pending_transcriptions()
-            logger.info(f"Trouvé {len(pending_transcriptions)} transcriptions en attente")
+            logger.info("=== Vérification des transcriptions en attente ===")
             
-            # Traiter chaque transcription
-            for meeting in pending_transcriptions:
+            # Vérifier d'abord les transcriptions bloquées
+            stalled_meetings = check_stalled_transcriptions()
+            if stalled_meetings:
+                logger.info(f"Réinitialisé {len(stalled_meetings)} transcription(s) bloquée(s)")
+            
+            # Récupérer les transcriptions en attente
+            meetings = get_pending_transcriptions()
+            logger.info(f"Trouvé {len(meetings)} transcription(s) en attente/processing")
+            
+            for meeting in meetings:
                 try:
                     process_transcription(meeting)
                 except Exception as e:
-                    logger.error(f"Erreur lors du traitement de la réunion {meeting['id']}: {str(e)}")
-                    logger.error(traceback.format_exc())
+                    logger.error(f"Erreur lors du traitement de la réunion {meeting['id']}: {e}")
+                    traceback.print_exc()
             
-            # Si mode single_run, sortir après un cycle
             if single_run:
-                logger.info("Mode single-run, arrêt du service")
+                logger.info("Exécution unique terminée")
                 break
                 
-            # Attendre avant la prochaine vérification
-            logger.info(f"En attente de nouvelles transcriptions ({check_interval}s)")
+            logger.info(f"En attente de {check_interval} secondes avant la prochaine vérification...")
             time.sleep(check_interval)
             
     except KeyboardInterrupt:
-        logger.info("Arrêt du service de transcription")
+        logger.info("Interruption clavier détectée, arrêt du service...")
     except Exception as e:
-        logger.error(f"Erreur non gérée: {str(e)}")
-        logger.error(traceback.format_exc())
-    finally:
-        conn.close()
+        logger.error(f"Erreur non gérée: {e}")
+        traceback.print_exc()
+        return 1
         
+    return 0
+
 if __name__ == "__main__":
     import argparse
     

@@ -1,0 +1,12 @@
+[Unit]
+Description=Process transcription queue every minute
+Requires=transcription-queue.service
+
+[Timer]
+Unit=transcription-queue.service
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

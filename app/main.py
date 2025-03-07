@@ -2,13 +2,14 @@ from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from .routes import auth, meetings, profile
+from .routes import auth, meetings, profile, simple_meetings
 from .core.config import settings
 from .core.security import get_current_user
 from fastapi.openapi.utils import get_openapi
 import time
 import logging
 from contextlib import asynccontextmanager
+from .services.queue_processor import start_queue_processor, stop_queue_processor
 
 # Configuration du logging
 logging.basicConfig(
@@ -25,9 +26,40 @@ logger = logging.getLogger("meeting-transcriber")
 async def lifespan(app: FastAPI):
     # Opérations de démarrage
     logger.info("Démarrage de l'API Meeting Transcriber")
+    
+    # Traiter immédiatement les transcriptions en attente au démarrage
+    # Méthode 1: Service original
+    from .services.assemblyai import _process_transcription
+    from .db.queries import get_pending_transcriptions
+    import threading
+    
+    # Récupérer toutes les transcriptions en attente
+    pending_meetings = get_pending_transcriptions()
+    if pending_meetings:
+        logger.info(f"Traitement de {len(pending_meetings)} transcription(s) en attente au démarrage (méthode originale)")
+        
+        # Traiter chaque transcription dans un thread séparé
+        for meeting in pending_meetings:
+            thread = threading.Thread(
+                target=_process_transcription,
+                args=(meeting["id"], meeting["file_url"], meeting["user_id"])
+            )
+            thread.daemon = False
+            thread.start()
+            logger.info(f"Transcription lancée pour la réunion {meeting['id']}")
+    
+    # Méthode 2: Nouveau service simplifié
+    from .services.simple_transcription import process_pending_transcriptions
+    logger.info("Traitement des transcriptions en attente avec le service simplifié")
+    process_pending_transcriptions()
+    
+    # Démarrer le processeur de file d'attente
+    await start_queue_processor()
+    
     # Générer le schéma OpenAPI
     yield
     # Opérations de fermeture
+    await stop_queue_processor()
     logger.info("Arrêt de l'API Meeting Transcriber")
 
 # Cache pour les réponses des endpoints sans état
@@ -115,6 +147,7 @@ async def health_check():
 app.include_router(auth.router, prefix="")
 app.include_router(meetings.router, prefix="")
 app.include_router(profile.router, prefix="")
+app.include_router(simple_meetings.router, prefix="")
 
 # Montage des répertoires de fichiers statiques
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
