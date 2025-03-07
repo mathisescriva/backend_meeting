@@ -17,6 +17,7 @@ import traceback
 import magic
 from pathlib import Path
 from datetime import datetime, timedelta
+import mimetypes
 
 # Configurer le logging
 logging.basicConfig(
@@ -100,42 +101,39 @@ def process_transcription(meeting):
     meeting_id = meeting['id']
     user_id = meeting['user_id']
     file_url = meeting['file_url']
+    title = meeting['title']
+    created_at = meeting['created_at']
     
-    logger.info(f"=== Traitement de la réunion {meeting_id} - {meeting['title']} ===")
+    logger.info(f"=== Traitement de la réunion {meeting_id} - {title} ===")
     logger.info(f"Statut actuel: {meeting['transcript_status']}")
-    logger.info(f"Date de création: {meeting['created_at']}")
+    logger.info(f"Date de création: {created_at}")
     
-    # Vérifier le fichier
-    if file_url.startswith("/uploads/"):
-        file_path = UPLOADS_DIR.parent / file_url.lstrip('/')
-        logger.info(f"Vérification du fichier: {file_path}, Existe: {os.path.exists(file_path)}")
+    # Construire le chemin complet vers le fichier
+    if file_url.startswith('/'):
+        file_url = file_url[1:]  # Enlever le / initial si présent
+    full_path = os.path.join(BASE_DIR, file_url)
+    
+    # Vérifier si le fichier existe
+    if not os.path.exists(full_path):
+        logger.error(f"Fichier introuvable: {full_path}")
+        update_meeting_status(meeting_id, user_id, "error", "Fichier audio introuvable")
+        return False
+    
+    logger.info(f"Vérification du fichier: {full_path}, Existe: {os.path.exists(full_path)}")
+    
+    # Vérifier la taille du fichier
+    file_size = os.path.getsize(full_path)
+    if file_size > 100 * 1024 * 1024:  # 100 MB
+        error_message = f"Le fichier est trop volumineux: {file_size} bytes (max: 100MB)"
+        logger.error(error_message)
+        update_meeting_status(meeting_id, user_id, "error", error_message)
+        return False
         
-        if not os.path.exists(file_path):
-            logger.error(f"Fichier introuvable: {file_path}")
-            update_meeting_status(
-                meeting_id, 
-                user_id, 
-                "error", 
-                "Le fichier audio est introuvable."
-            )
-            return False
-            
-        # Vérifier le type MIME
-        try:
-            file_mime = magic.Magic(mime=True).from_file(str(file_path))
-            logger.info(f"Type MIME du fichier: {file_mime}")
-            
-            if not file_mime.startswith("audio/"):
-                logger.error(f"Le fichier n'est pas un fichier audio valide: {file_mime}")
-                update_meeting_status(
-                    meeting_id, 
-                    user_id, 
-                    "error", 
-                    f"Le fichier n'est pas un fichier audio valide. Type détecté: {file_mime}"
-                )
-                return False
-        except Exception as e:
-            logger.error(f"Erreur lors de la vérification du type MIME: {e}")
+    # Vérifier le type de fichier
+    mime_type, _ = mimetypes.guess_type(full_path)
+    if not mime_type or not mime_type.startswith('audio/'):
+        mime_type = 'audio/wav'  # Fallback par défaut
+    logger.info(f"Type MIME du fichier: {mime_type}")
     
     try:
         # Si déjà en processing, attendre un peu plus longtemps avant de reprendre
@@ -152,8 +150,8 @@ def process_transcription(meeting):
         update_meeting_status(meeting_id, user_id, "processing")
         
         # Upload du fichier vers AssemblyAI
-        logger.info(f"Upload du fichier: {file_path}")
-        upload_url = upload_file_to_assemblyai(str(file_path))
+        logger.info(f"Upload du fichier: {full_path}")
+        upload_url = upload_file_to_assemblyai(str(full_path))
         logger.info(f"Fichier uploadé: {upload_url}")
         
         # Démarrer la transcription

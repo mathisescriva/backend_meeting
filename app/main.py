@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Request, status, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from .routes import auth, meetings
+from fastapi.staticfiles import StaticFiles
+from .routes import auth, meetings, profile
 from .core.config import settings
 from .core.security import get_current_user
 from fastapi.openapi.utils import get_openapi
@@ -44,6 +45,7 @@ app = FastAPI(
     - L'upload de fichiers audio de réunions
     - La transcription automatique du contenu audio en texte
     - La gestion et la consultation des transcriptions
+    - La gestion du profil utilisateur
     
     Développée avec FastAPI et intégrée avec AssemblyAI pour la transcription.
     """,
@@ -93,20 +95,12 @@ app.add_middleware(
 )
 
 # Routes de base
-@app.get("/", tags=["Statut"])
-def read_root():
+@app.get("/", response_class=RedirectResponse)
+def redirect_to_home():
     """
-    Point d'entrée principal de l'API.
-    
-    Retourne des informations de base sur l'API et son état.
+    Redirige vers la page d'accueil.
     """
-    return {
-        "message": "Meeting Transcriber API",
-        "status": "online",
-        "version": "1.0.0",
-        "documentation": "/docs",
-        "api_base_url": "/api/v1"
-    }
+    return "/static/index.html"
 
 @app.get("/health", tags=["Statut"])
 async def health_check():
@@ -120,6 +114,11 @@ async def health_check():
 # Intégration des routes
 app.include_router(auth.router, prefix="")
 app.include_router(meetings.router, prefix="")
+app.include_router(profile.router, prefix="")
+
+# Montage des répertoires de fichiers statiques
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Personnalisation de OpenAPI
 def custom_openapi():

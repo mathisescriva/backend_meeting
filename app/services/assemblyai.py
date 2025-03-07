@@ -1,6 +1,5 @@
 import requests
 import time
-import threading
 import os
 import json
 import subprocess
@@ -8,6 +7,7 @@ from pathlib import Path
 from ..core.config import settings
 from ..db.queries import update_meeting, get_meeting
 from fastapi.logger import logger
+import mimetypes
 
 # API endpoints and key
 ASSEMBLY_AI_API_KEY = settings.ASSEMBLYAI_API_KEY
@@ -53,7 +53,7 @@ def convert_to_wav(input_path: str) -> str:
 def transcribe_meeting(meeting_id: str, file_url: str, user_id: str):
     """
     Transcrit un fichier audio et met à jour la base de données avec les résultats.
-    Cette fonction est exécutée dans un thread séparé.
+    Cette version évite l'utilisation de threads pour prévenir les problèmes SQLite.
     """
     try:
         # Vérifier si le meeting existe toujours avant de lancer la transcription
@@ -67,42 +67,12 @@ def transcribe_meeting(meeting_id: str, file_url: str, user_id: str):
             file_path = settings.UPLOADS_DIR.parent / file_url.lstrip('/')
             if not os.path.exists(file_path):
                 logger.error(f"Fichier audio introuvable pour la transcription: {file_path}")
-                # Mettre à jour le statut en "error"
                 update_meeting(meeting_id, user_id, {
                     "transcript_status": "error",
                     "transcript_text": "Le fichier audio est introuvable."
                 })
                 return
                 
-        # Lancer dans un thread pour éviter de bloquer
-        logger.info(f"Création d'un thread pour la transcription de la réunion {meeting_id}")
-        thread = threading.Thread(
-            target=_process_transcription,
-            args=(meeting_id, file_url, user_id)
-        )
-        # Définir comme non-daemon pour qu'il continue à s'exécuter même si le thread principal se termine
-        thread.daemon = False
-        thread.start()
-        logger.info(f"Thread de transcription lancé pour la réunion {meeting_id}")
-        
-    except Exception as e:
-        logger.error(f"Erreur lors du lancement de la transcription pour {meeting_id}: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        # Mettre à jour le statut en "error"
-        try:
-            update_meeting(meeting_id, user_id, {
-                "transcript_status": "error",
-                "transcript_text": f"Erreur lors du lancement de la transcription: {str(e)}"
-            })
-        except Exception as update_error:
-            logger.error(f"Impossible de mettre à jour le statut en erreur: {str(update_error)}")
-    
-def _process_transcription(meeting_id: str, file_url: str, user_id: str):
-    """Fonction interne pour traiter la transcription de manière asynchrone"""
-    try:
-        logger.info(f"[Thread #{threading.get_ident()}] Démarrage de la transcription pour la réunion {meeting_id}")
-        
         # Mettre à jour le statut en "processing"
         update_meeting(meeting_id, user_id, {"transcript_status": "processing"})
         
@@ -195,7 +165,8 @@ def _process_transcription(meeting_id: str, file_url: str, user_id: str):
                 logger.error(f"Erreur de transcription: {error_message}")
                 
                 update_meeting(meeting_id, user_id, {
-                    "transcript_status": "error"
+                    "transcript_status": "error",
+                    "transcript_text": f"Erreur de transcription: {error_message}"
                 })
                 return
             
@@ -205,171 +176,76 @@ def _process_transcription(meeting_id: str, file_url: str, user_id: str):
         # Si on arrive ici, c'est que le nombre maximum de tentatives a été atteint
         logger.warning(f"Nombre maximum de tentatives atteint pour la transcription {transcript_id}")
         update_meeting(meeting_id, user_id, {
-            "transcript_status": "timeout"
+            "transcript_status": "timeout",
+            "transcript_text": "La transcription a pris trop de temps et a été interrompue."
         })
         
     except Exception as e:
         logger.error(f"Erreur lors de la transcription: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         
         # Mettre à jour le statut en cas d'erreur
         try:
             update_meeting(meeting_id, user_id, {
-                "transcript_status": "error"
+                "transcript_status": "error",
+                "transcript_text": f"Erreur lors de la transcription: {str(e)}"
             })
         except Exception as db_error:
             logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
 
-# Versions de fonctions rendues publiques pour les tests
-async def upload_file_to_assemblyai(file_path: str, api_key: str = ASSEMBLY_AI_API_KEY):
-    """Télécharge un fichier audio vers AssemblyAI et retourne l'URL."""
-    upload_endpoint = f"{ASSEMBLY_AI_API_URL}/upload"
-    
-    headers = {
-        "authorization": api_key
-    }
+def _upload_file_to_assemblyai(file_path: str):
+    """Télécharge un fichier sur le serveur d'AssemblyAI"""
+    logger.info(f"Tentative d'upload du fichier: {file_path}")
     
     try:
-        with open(file_path, 'rb') as f:
+        # Récupérer la taille du fichier
+        file_size = os.path.getsize(file_path)
+        logger.info(f"Taille du fichier: {file_size} bytes")
+        
+        if file_size > 100 * 1024 * 1024:  # 100 MB
+            raise Exception(f"Le fichier est trop volumineux: {file_size} bytes (max: 100MB)")
+            
+        headers = {
+            "authorization": ASSEMBLY_AI_API_KEY
+        }
+        
+        # Détecter le type MIME à partir du fichier
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type or not mime_type.startswith('audio/'):
+            mime_type = 'audio/wav'  # Fallback par défaut
+            
+        logger.info(f"Type MIME du fichier: {mime_type}")
+        
+        logger.info("Début de l'upload en streaming...")
+        
+        with open(file_path, 'rb') as file:
             response = requests.post(
-                upload_endpoint,
+                "https://api.assemblyai.com/v2/upload",
                 headers=headers,
-                data=f
+                data=file
             )
             
-        if response.status_code == 200:
-            return response.json()["upload_url"]
-        else:
-            error_msg = response.json().get('error', 'Unknown error')
-            raise Exception(f"Échec de l'upload du fichier à AssemblyAI: {error_msg} (status: {response.status_code})")
-    except Exception as e:
-        raise Exception(f"Échec de l'upload du fichier à AssemblyAI: {str(e)}")
-
-async def start_transcription(audio_url: str, api_key: str = ASSEMBLY_AI_API_KEY, speaker_labels: bool = True, language_code: str = "fr"):
-    """Démarre une transcription sur AssemblyAI et retourne l'ID de la transcription."""
-    transcript_endpoint = f"{ASSEMBLY_AI_API_URL}/transcript"
-    
-    headers = {
-        "authorization": api_key,
-        "content-type": "application/json"
-    }
-    
-    transcript_request = {
-        "audio_url": audio_url,
-        "speaker_labels": speaker_labels,
-        "language_code": language_code
-    }
-    
-    try:
-        response = requests.post(
-            transcript_endpoint,
-            json=transcript_request,
-            headers=headers
-        )
-        
-        if response.status_code == 200:
-            return response.json()["id"]
-        else:
-            error_msg = response.json().get('error', 'Unknown error')
-            raise Exception(f"Échec du démarrage de la transcription: {error_msg} (status: {response.status_code})")
-    except Exception as e:
-        raise Exception(f"Échec du démarrage de la transcription: {str(e)}")
-
-async def check_transcription_status(transcript_id: str, api_key: str = ASSEMBLY_AI_API_KEY):
-    """Vérifie le statut d'une transcription et retourne le statut et le texte."""
-    transcript_endpoint = f"{ASSEMBLY_AI_API_URL}/transcript/{transcript_id}"
-    
-    headers = {
-        "authorization": api_key
-    }
-    
-    try:
-        response = requests.get(transcript_endpoint, headers=headers)
-        
-        if response.status_code == 200:
-            transcript_response = response.json()
-            status = transcript_response.get('status')
-            
-            if status == 'completed':
-                # Récupérer le texte de transcription
-                transcript_text = transcript_response.get('text', '')
-                
-                # Récupérer la durée audio
-                audio_duration = transcript_response.get('audio_duration', 0)
-                
-                # Récupérer les informations sur les interlocuteurs si disponibles
-                utterances = transcript_response.get('utterances', [])
-                
-                # Calculer le nombre unique de speakers
-                speakers_set = set()
-                if utterances:
-                    # Formater le texte avec les interlocuteurs
-                    formatted_text = []
-                    for utterance in utterances:
-                        speaker = utterance.get('speaker', 'Unknown')
-                        speakers_set.add(speaker)
-                        text = utterance.get('text', '')
-                        formatted_text.append(f"Speaker {speaker}: {text}")
-                    
-                    transcript_text = "\n".join(formatted_text)
-                
-                speakers_count = len(speakers_set)
-                
-                return status, transcript_text, int(audio_duration) if audio_duration else None, speakers_count if speakers_count > 0 else None
-            
-            return status, None, None, None
-        else:
-            error_msg = response.json().get('error', 'Unknown error')
-            raise Exception(f"Échec de la vérification du statut: {error_msg} (status: {response.status_code})")
-    except Exception as e:
-        raise Exception(f"Échec de la vérification du statut: {str(e)}")
-
-def _upload_file_to_assemblyai(file_path: str):
-    """Version synchrone interne pour l'upload de fichier vers AssemblyAI"""
-    upload_endpoint = f"{ASSEMBLY_AI_API_URL}/upload"
-    
-    headers = {
-        "authorization": ASSEMBLY_AI_API_KEY
-    }
-    
-    try:
-        logger.info(f"Tentative d'upload du fichier: {file_path}")
-        logger.info(f"Taille du fichier: {os.path.getsize(file_path)} bytes")
-        logger.info(f"Headers: {headers}")
-        
-        # Vérifier le type MIME du fichier
-        import magic
-        mime = magic.Magic(mime=True)
-        file_mime = mime.from_file(file_path)
-        logger.info(f"Type MIME du fichier: {file_mime}")
-        
-        def read_file(filename):
-            with open(filename, 'rb') as _file:
-                while True:
-                    data = _file.read(5242880)  # Lire par chunks de 5MB
-                    if not data:
-                        break
-                    yield data
-        
-        # Envoyer la requête avec les données en streaming
-        logger.info("Début de l'upload en streaming...")
-        response = requests.post(
-            upload_endpoint,
-            headers=headers,
-            data=read_file(file_path)
-        )
-        
         logger.info(f"Réponse AssemblyAI - Status: {response.status_code}")
-        logger.info(f"Réponse AssemblyAI - Headers: {dict(response.headers)}")
-        logger.info(f"Réponse AssemblyAI - Content: {response.text}")
-        
-        if response.status_code == 200:
-            upload_url = response.json()["upload_url"]
+        logger.info(f"Réponse AssemblyAI - Headers: {response.headers}")
+        logger.info(f"Réponse AssemblyAI - Content: {response.text[:500]}\n")
+            
+        if response.status_code != 200:
+            try:
+                error_msg = response.json().get('error', f"Erreur HTTP {response.status_code}")
+                raise Exception(f"Échec de l'upload du fichier: {error_msg}")
+            except json.JSONDecodeError:
+                raise Exception(f"Échec de l'upload du fichier (HTTP {response.status_code}): {response.text[:200]}")
+                
+        try:
+            upload_url = response.json().get('upload_url')
+            if not upload_url:
+                raise Exception(f"URL d'upload manquante dans la réponse de AssemblyAI")
             logger.info(f"Upload réussi, URL: {upload_url}")
             return upload_url
-        else:
-            error_msg = response.json().get('error', 'Unknown error')
-            logger.error(f"Échec de l'upload - Status: {response.status_code}, Error: {error_msg}")
-            raise Exception(f"Échec de l'upload du fichier: {error_msg} (status: {response.status_code})")
+        except json.JSONDecodeError as e:
+            raise Exception(f"Échec de l'analyse de la réponse AssemblyAI: {response.text[:200]}")
+        
     except Exception as e:
         logger.error(f"Exception lors de l'upload: {str(e)}")
         raise Exception(f"Échec de l'upload du fichier à AssemblyAI: {str(e)}")

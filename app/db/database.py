@@ -84,20 +84,36 @@ def reset_db_pool():
 
 def init_db():
     """Initialiser la base de données avec les tables nécessaires"""
-    conn = get_db_connection()
+    conn = None
     try:
+        conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Création de la table utilisateurs
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
+        # Vérifier si les tables existent déjà
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+        users_table_exists = cursor.fetchone() is not None
+        
+        if not users_table_exists:
+            cursor.execute("""
+            CREATE TABLE users (
                 id TEXT PRIMARY KEY,
                 email TEXT UNIQUE NOT NULL,
                 hashed_password TEXT NOT NULL,
                 full_name TEXT,
+                profile_picture_url TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        ''')
+            """)
+            cursor.execute("CREATE INDEX idx_user_email ON users(email)")
+            
+        else:
+            # Vérifier si la colonne profile_picture_url existe déjà
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            if 'profile_picture_url' not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN profile_picture_url TEXT")
+                print("Colonne profile_picture_url ajoutée à la table users")
         
         # Création de la table meetings
         cursor.execute('''
@@ -114,13 +130,13 @@ def init_db():
         ''')
         
         # Création d'index pour améliorer les performances
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_email ON users(email)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_meeting_user ON meetings(user_id)')
         
         conn.commit()
         print("Database initialized successfully")
     finally:
-        release_db_connection(conn)
+        if conn:
+            release_db_connection(conn)
 
 def create_user(user_data):
     """Créer un nouvel utilisateur"""
@@ -177,6 +193,37 @@ def get_user_by_id(user_id):
         return None
     finally:
         release_db_connection(conn)
+
+def update_user(user_id, update_data):
+    """Mettre à jour les informations d'un utilisateur"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Construire la requête de mise à jour dynamiquement
+        placeholders = ", ".join([f"{k} = ?" for k in update_data.keys()])
+        values = list(update_data.values())
+        
+        query = f"UPDATE users SET {placeholders} WHERE id = ?"
+        cursor.execute(query, (*values, user_id))
+        conn.commit()
+        
+        # Vider le cache pour cet utilisateur
+        cache_key = f"user_id_{user_id}"
+        if cache_key in user_cache:
+            del user_cache[cache_key]
+        
+        # Récupérer l'utilisateur mis à jour
+        return get_user_by_id(user_id)
+    except Exception as e:
+        print(f"Erreur lors de la mise à jour de l'utilisateur: {e}")
+        if conn:
+            conn.rollback()
+        return None
+    finally:
+        if conn:
+            release_db_connection(conn)
 
 # Cache utilisateur (pour limiter les requêtes à la base de données)
 user_cache = {}

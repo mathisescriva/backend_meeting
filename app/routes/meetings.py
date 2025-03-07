@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Path, Query
 from fastapi.logger import logger
+from fastapi.responses import FileResponse
 from ..core.security import get_current_user
 from ..models.user import User
 from ..models.meeting import Meeting, MeetingCreate, MeetingUpdate
 from ..db.firebase import upload_mp3
-from ..services.assemblyai import transcribe_meeting, convert_to_wav, check_transcription_status
+from ..services.assemblyai import transcribe_meeting, convert_to_wav
 from ..db.queries import create_meeting, get_meeting, get_meetings_by_user, update_meeting, delete_meeting
 from datetime import datetime
 from typing import List, Optional
@@ -310,6 +311,43 @@ async def get_transcript(
         "duration_seconds": meeting.get("duration_seconds"),
         "speakers_count": meeting.get("speakers_count")
     }
+
+@router.get("/{meeting_id}/audio", response_class=FileResponse)
+async def download_meeting_audio(
+    meeting_id: str = Path(..., description="ID unique de la réunion"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Télécharge le fichier audio associé à une réunion.
+    
+    - **meeting_id**: Identifiant unique de la réunion
+    
+    Cette route permet de télécharger le fichier audio original de la réunion
+    pour écouter l'enregistrement.
+    """
+    # Vérifier que la réunion existe et appartient à l'utilisateur
+    meeting = get_meeting(meeting_id, current_user["id"])
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Réunion non trouvée")
+    
+    # Récupérer le chemin du fichier audio
+    file_url = meeting.get("file_url")
+    if not file_url:
+        raise HTTPException(status_code=404, detail="Fichier audio non trouvé")
+    
+    # Le file_url commence par un /, on le retire
+    file_path = file_url[1:] if file_url.startswith("/") else file_url
+    
+    # Vérifier que le fichier existe
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Fichier audio non trouvé sur le serveur")
+    
+    # Renvoyer le fichier
+    return FileResponse(
+        file_path, 
+        media_type="audio/wav",
+        filename=f"meeting_{meeting_id}.wav"
+    )
 
 @router.post("/validate-ids", response_model=dict)
 async def validate_meeting_ids(

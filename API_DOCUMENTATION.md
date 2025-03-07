@@ -15,9 +15,15 @@
    - [Supprimer une réunion](#supprimer-une-réunion)
    - [Relancer une transcription](#relancer-une-transcription)
    - [Récupérer uniquement la transcription](#récupérer-uniquement-la-transcription)
-4. [Formats et structures de données](#formats-et-structures-de-données)
-5. [Codes d'erreur](#codes-derreur)
-6. [Bonnes pratiques](#bonnes-pratiques)
+   - [Télécharger le fichier audio](#télécharger-le-fichier-audio)
+4. [Gestion du profil utilisateur](#gestion-du-profil-utilisateur)
+   - [Obtenir les informations de profil](#obtenir-les-informations-de-profil)
+   - [Mettre à jour le profil](#mettre-à-jour-le-profil)
+   - [Télécharger une photo de profil](#télécharger-une-photo-de-profil)
+   - [Changer le mot de passe](#changer-le-mot-de-passe)
+5. [Formats et structures de données](#formats-et-structures-de-données)
+6. [Codes d'erreur](#codes-derreur)
+7. [Bonnes pratiques](#bonnes-pratiques)
 
 ## Introduction
 
@@ -276,6 +282,156 @@ Récupère uniquement la transcription d'une réunion.
   "transcript_status": "completed",
   "duration_seconds": 300,
   "speakers_count": 2
+}
+```
+
+### Télécharger le fichier audio
+
+Télécharge le fichier audio original associé à une réunion.
+
+**URL** : `/meetings/{meeting_id}/audio`  
+**Méthode** : `GET`  
+**Authentification requise** : Oui  
+
+**Réponse** : Fichier audio au format WAV
+
+**Statut** : 200 OK, 404 Not Found
+
+**Notes** : 
+- Cette route retourne directement le fichier audio, prêt à être écouté ou téléchargé
+- Le fichier sera renvoyé avec un nom au format `meeting_{meeting_id}.wav`
+
+## Gestion du profil utilisateur
+
+### Obtenir les informations de profil
+
+Récupère les informations complètes du profil de l'utilisateur connecté.
+
+**URL** : `/profile/me`
+
+**Méthode** : `GET`
+
+**Authentification** : Requise
+
+**Headers** :
+
+```
+Authorization: Bearer votre_token_jwt
+```
+
+**Exemple de réponse réussie** :
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "utilisateur@example.com",
+  "full_name": "Nom Complet",
+  "profile_picture_url": "/uploads/profile_pictures/550e8400-e29b-41d4-a716-446655440000/profile_12345678.jpg",
+  "created_at": "2025-03-06T10:30:22.123456"
+}
+```
+
+### Mettre à jour le profil
+
+Met à jour les informations du profil de l'utilisateur connecté.
+
+**URL** : `/profile/update`
+
+**Méthode** : `PUT`
+
+**Authentification** : Requise
+
+**Headers** :
+
+```
+Authorization: Bearer votre_token_jwt
+```
+
+**Données de la requête** :
+
+```json
+{
+  "full_name": "Nouveau Nom Complet",
+  "email": "nouvel.email@example.com"
+}
+```
+
+Tous les champs sont optionnels. Seuls les champs fournis seront mis à jour.
+
+**Exemple de réponse réussie** :
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "nouvel.email@example.com",
+  "full_name": "Nouveau Nom Complet",
+  "profile_picture_url": "/uploads/profile_pictures/550e8400-e29b-41d4-a716-446655440000/profile_12345678.jpg",
+  "created_at": "2025-03-06T10:30:22.123456"
+}
+```
+
+### Télécharger une photo de profil
+
+Télécharge et met à jour la photo de profil de l'utilisateur connecté.
+
+**URL** : `/profile/upload-picture`
+
+**Méthode** : `POST`
+
+**Authentification** : Requise
+
+**Headers** :
+
+```
+Authorization: Bearer votre_token_jwt
+Content-Type: multipart/form-data
+```
+
+**Corps de la requête** :
+- `file` : Fichier image (JPEG, PNG, GIF, WEBP) de taille inférieure à 5MB
+
+**Exemple de réponse réussie** :
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "utilisateur@example.com",
+  "full_name": "Nom Complet",
+  "profile_picture_url": "/uploads/profile_pictures/550e8400-e29b-41d4-a716-446655440000/profile_87654321.jpg",
+  "created_at": "2025-03-06T10:30:22.123456"
+}
+```
+
+### Changer le mot de passe
+
+Change le mot de passe de l'utilisateur connecté.
+
+**URL** : `/profile/change-password`
+
+**Méthode** : `PUT`
+
+**Authentification** : Requise
+
+**Headers** :
+
+```
+Authorization: Bearer votre_token_jwt
+```
+
+**Données de la requête** :
+
+```json
+{
+  "current_password": "mot_de_passe_actuel",
+  "new_password": "nouveau_mot_de_passe"
+}
+```
+
+**Exemple de réponse réussie** :
+
+```json
+{
+  "message": "Mot de passe mis à jour avec succès"
 }
 ```
 
