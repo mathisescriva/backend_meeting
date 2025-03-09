@@ -28,29 +28,8 @@ async def lifespan(app: FastAPI):
     logger.info("Démarrage de l'API Meeting Transcriber")
     
     # Traiter immédiatement les transcriptions en attente au démarrage
-    # Méthode 1: Service original
-    from .services.assemblyai import _process_transcription
-    from .db.queries import get_pending_transcriptions
-    import threading
-    
-    # Récupérer toutes les transcriptions en attente
-    pending_meetings = get_pending_transcriptions()
-    if pending_meetings:
-        logger.info(f"Traitement de {len(pending_meetings)} transcription(s) en attente au démarrage (méthode originale)")
-        
-        # Traiter chaque transcription dans un thread séparé
-        for meeting in pending_meetings:
-            thread = threading.Thread(
-                target=_process_transcription,
-                args=(meeting["id"], meeting["file_url"], meeting["user_id"])
-            )
-            thread.daemon = False
-            thread.start()
-            logger.info(f"Transcription lancée pour la réunion {meeting['id']}")
-    
-    # Méthode 2: Nouveau service simplifié
-    from .services.simple_transcription import process_pending_transcriptions
-    logger.info("Traitement des transcriptions en attente avec le service simplifié")
+    from .services.assemblyai import process_pending_transcriptions
+    logger.info("Traitement des transcriptions en attente au démarrage")
     process_pending_transcriptions()
     
     # Démarrer le processeur de file d'attente

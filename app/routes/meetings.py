@@ -4,7 +4,8 @@ from ..core.security import get_current_user
 from ..models.user import User
 from ..models.meeting import Meeting, MeetingCreate, MeetingUpdate
 from ..db.firebase import upload_mp3
-from ..services.assemblyai import transcribe_meeting, convert_to_wav, check_transcription_status, _process_transcription_wrapper
+from ..services.assemblyai import transcribe_meeting, convert_to_wav, check_transcription_status, process_transcription
+from ..services.mistral_summary import process_meeting_summary
 from ..db.queries import create_meeting, get_meeting, get_meetings_by_user, update_meeting, delete_meeting
 from datetime import datetime
 from typing import List, Optional
@@ -87,14 +88,10 @@ async def upload_meeting(
             # Lancer la transcription de manière asynchrone avec logs détaillés
             logger.info(f"Lancement de la transcription pour la réunion {meeting['id']}")
             try:
-                # Utiliser _process_transcription_wrapper directement pour un traitement immédiat
-                # au lieu de transcribe_meeting qui met simplement en file d'attente
-                from ..services.assemblyai import _process_transcription_wrapper
-                
-                # Créer un thread et exécuter immédiatement - utiliser le wrapper qui gère les exceptions
+                # Créer un thread et exécuter immédiatement la transcription avec le service unifié
                 transcription_thread = threading.Thread(
-                    target=_process_transcription_wrapper,
-                    args=(meeting["id"], file_url, current_user["id"], None)
+                    target=process_transcription,
+                    args=(meeting["id"], file_url, current_user["id"])
                 )
                 transcription_thread.daemon = False  # Permet au thread de continuer même si le serveur s'arrête
                 transcription_thread.start()
@@ -198,6 +195,107 @@ async def update_meeting_route(
         raise HTTPException(status_code=404, detail="Réunion non trouvée")
         
     return updated_meeting
+
+@router.post("/{meeting_id}/generate-summary", response_model=dict)
+async def generate_meeting_summary_route(
+    meeting_id: str = Path(..., description="ID unique de la réunion"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Génère un compte rendu de réunion en utilisant l'API Mistral.
+    
+    - **meeting_id**: Identifiant unique de la réunion
+    
+    Cette route déclenche la génération d'un compte rendu de réunion à partir
+    de la transcription existante. La génération s'effectue de manière asynchrone.
+    """
+    # Vérifier que la réunion existe
+    meeting = get_meeting(meeting_id, current_user["id"])
+    
+    if not meeting:
+        raise HTTPException(
+            status_code=404, 
+            detail={
+                "message": "Réunion non trouvée",
+                "meeting_id": meeting_id,
+                "reason": "Cette réunion a peut-être été supprimée",
+                "type": "MEETING_NOT_FOUND"
+            }
+        )
+    
+    # Vérifier que la transcription est terminée
+    if meeting.get("transcript_status") != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "La transcription n'est pas terminée",
+                "meeting_id": meeting_id,
+                "reason": "La génération du compte rendu nécessite une transcription complète",
+                "type": "TRANSCRIPTION_NOT_COMPLETED"
+            }
+        )
+    
+    # Démarrer la génération du compte rendu
+    try:
+        # Mettre à jour le statut pour indiquer que la génération est en cours
+        update_meeting(meeting_id, current_user["id"], {"summary_status": "processing"})
+        
+        # Lancer le processus de génération du compte rendu
+        process_meeting_summary(meeting_id, current_user["id"])
+        
+        # Récupérer la réunion mise à jour
+        updated_meeting = get_meeting(meeting_id, current_user["id"])
+        
+        return {
+            "message": "Génération du compte rendu en cours",
+            "meeting": updated_meeting
+        }
+    except Exception as e:
+        logger.error(f"Erreur lors du démarrage de la génération du compte rendu: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Erreur lors du démarrage de la génération du compte rendu",
+                "error": str(e),
+                "type": "SUMMARY_GENERATION_ERROR"
+            }
+        )
+
+@router.get("/{meeting_id}/summary", response_model=dict)
+async def get_meeting_summary(
+    meeting_id: str = Path(..., description="ID unique de la réunion"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Récupère le compte rendu d'une réunion spécifique.
+    
+    - **meeting_id**: Identifiant unique de la réunion
+    
+    Retourne le compte rendu de la réunion et son statut.
+    """
+    # Vérifier que la réunion existe
+    meeting = get_meeting(meeting_id, current_user["id"])
+    
+    if not meeting:
+        raise HTTPException(
+            status_code=404, 
+            detail={
+                "message": "Réunion non trouvée",
+                "meeting_id": meeting_id,
+                "reason": "Cette réunion a peut-être été supprimée",
+                "type": "MEETING_NOT_FOUND"
+            }
+        )
+    
+    # Récupérer le compte rendu et son statut
+    summary_text = meeting.get("summary_text")
+    summary_status = meeting.get("summary_status")
+    
+    return {
+        "meeting_id": meeting_id,
+        "summary_text": summary_text,
+        "summary_status": summary_status
+    }
 
 @router.delete("/{meeting_id}", response_model=dict)
 async def delete_meeting_route(
@@ -317,6 +415,7 @@ async def get_transcript(
         raise HTTPException(status_code=404, detail="Réunion non trouvée")
     
     # Si la transcription est en cours ou terminée, retourner les informations
+    # Note: get_meeting() applique déjà normalize_transcript_format
     return {
         "transcript_text": meeting.get("transcript_text", ""),
         "transcript_status": meeting.get("transcript_status", "pending"),

@@ -5,7 +5,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from app.services.assemblyai import transcribe_meeting, _process_transcription
+from app.services.assemblyai import transcribe_meeting, process_transcription, upload_file_to_assemblyai, start_transcription, check_transcription_status
 from app.db.database import get_db_connection, release_db_connection
 from app.db.queries import update_meeting
 from app.core.config import Settings
@@ -94,13 +94,11 @@ def process_transcription_direct(meeting_id, file_url, user_id):
             except Exception as e:
                 logger.error(f"Erreur lors de la vérification du type MIME: {str(e)}")
         
-        # Appeler directement la fonction interne de traitement
-        from app.services.assemblyai import _upload_file_to_assemblyai, _start_transcription_assemblyai, _get_transcription_status_assemblyai
-        
+        # Utiliser les fonctions du service unifié
         if file_url.startswith("/uploads/"):
             logger.info("Étape 1: Upload du fichier vers AssemblyAI")
             try:
-                upload_url = _upload_file_to_assemblyai(str(file_path))
+                upload_url = upload_file_to_assemblyai(str(file_path))
                 logger.info(f"Fichier uploadé vers AssemblyAI: {upload_url}")
             except Exception as e:
                 logger.error(f"Erreur lors de l'upload: {str(e)}")
@@ -111,7 +109,7 @@ def process_transcription_direct(meeting_id, file_url, user_id):
         
         logger.info("Étape 2: Démarrer la transcription")
         try:
-            transcript_id = _start_transcription_assemblyai(upload_url)
+            transcript_id = start_transcription(upload_url, format_text=True)
             logger.info(f"Transcription lancée avec ID: {transcript_id}")
         except Exception as e:
             logger.error(f"Erreur lors du démarrage de la transcription: {str(e)}")
@@ -125,7 +123,7 @@ def process_transcription_direct(meeting_id, file_url, user_id):
             logger.info(f"Vérification du statut, tentative {attempt+1}/{max_retries}")
             
             try:
-                transcript_response = _get_transcription_status_assemblyai(transcript_id)
+                transcript_response = check_transcription_status(transcript_id)
                 status = transcript_response.get('status')
                 logger.info(f"Statut de la transcription: {status}")
                 
@@ -145,17 +143,23 @@ def process_transcription_direct(meeting_id, file_url, user_id):
                                 speaker = utterance.get('speaker', 'Unknown')
                                 speakers_set.add(speaker)
                                 text = utterance.get('text', '')
+                                # Format uniforme: "Speaker A: texte" avec préfixe "Speaker"
                                 formatted_text.append(f"Speaker {speaker}: {text}")
                             
                             transcription_text = "\n".join(formatted_text)
                         
                         speakers_count = len(speakers_set)
                         
+                        # Garantir qu'il y a toujours au moins 1 locuteur
+                        if speakers_count == 0:
+                            speakers_count = 1
+                            logger.warning("Aucun locuteur détecté, on force à 1")
+                        
                         update_data = {
                             "transcript_text": transcription_text,
                             "transcript_status": "completed",
-                            "duration_seconds": int(audio_duration) if audio_duration else None,
-                            "speakers_count": speakers_count if speakers_count > 0 else None
+                            "duration_seconds": int(audio_duration) if audio_duration else 0,
+                            "speakers_count": speakers_count
                         }
                         
                         update_meeting(meeting_id, user_id, update_data)

@@ -11,7 +11,7 @@ import threading
 from datetime import datetime, timedelta
 from ..core.config import settings
 from ..db.queries import get_meeting, update_meeting
-from .assemblyai import _process_transcription
+from .assemblyai import process_transcription
 from fastapi.logger import logger
 
 class QueueProcessor:
@@ -138,7 +138,7 @@ class QueueProcessor:
                 
                 # Traiter la transcription dans un thread séparé pour ne pas bloquer la boucle principale
                 thread = threading.Thread(
-                    target=self._process_transcription_wrapper,
+                    target=self.process_transcription_wrapper,
                     args=(meeting_id, file_url, user_id, queue_file_path)
                 )
                 thread.daemon = True
@@ -150,11 +150,11 @@ class QueueProcessor:
                 import traceback
                 logger.error(traceback.format_exc())
     
-    def _process_transcription_wrapper(self, meeting_id, file_url, user_id, queue_file_path):
-        """Wrapper pour _process_transcription qui supprime le fichier de queue à la fin"""
+    def process_transcription_wrapper(self, meeting_id, file_url, user_id, queue_file_path):
+        """Wrapper pour process_transcription qui supprime le fichier de queue à la fin"""
         try:
             logger.info(f"Traitement de la transcription pour {meeting_id}")
-            _process_transcription(meeting_id, file_url, user_id)
+            process_transcription(meeting_id, file_url, user_id)
             logger.info(f"Transcription terminée pour {meeting_id}")
         except Exception as e:
             logger.error(f"Erreur lors de la transcription pour {meeting_id}: {str(e)}")

@@ -79,21 +79,26 @@ meeting-transcriber-backend/
 │   │   └── security.py       # Sécurité et authentification
 │   ├── db/                   # Accès à la base de données
 │   │   └── database.py       # Fonctions de base de données
+│   │   └── queries.py        # Requêtes SQL pour les meetings et utilisateurs
 │   ├── models/               # Modèles Pydantic
 │   │   └── user.py           # Modèle utilisateur
 │   │   └── meeting.py        # Modèles de réunions
 │   ├── routes/               # Routeurs API
 │   │   ├── auth.py           # Routes d'authentification
-│   │   └── meetings.py       # Routes de gestion des réunions
+│   │   ├── meetings.py       # Routes de gestion des réunions
+│   │   └── simple_meetings.py # Routes simplifiées pour les réunions
 │   ├── services/             # Services métier
-│   │   └── transcription.py  # Service de transcription
+│   │   ├── assemblyai.py     # Service unifié de transcription avec AssemblyAI
+│   │   ├── file_upload.py    # Service de gestion des fichiers
+│   │   └── queue_processor.py # Processeur de file d'attente pour les transcriptions
 │   └── main.py               # Point d'entrée de l'application
 ├── uploads/                  # Répertoire pour stocker les fichiers
 ├── tests/                    # Tests
+├── migrations/               # Scripts de migration SQL
 ├── .env.example              # Exemple de fichier de configuration
 ├── Dockerfile                # Configuration Docker
 ├── docker-compose.yml        # Configuration Docker Compose
-├── nginx/                    # Configuration Nginx
+├── check_pending_transcriptions.py # Script utilitaire pour traiter les transcriptions en attente
 ├── requirements.txt          # Dépendances Python
 ├── start_production.sh       # Script de démarrage
 └── README.md                 # Documentation
@@ -116,6 +121,25 @@ meeting-transcriber-backend/
 | ASSEMBLYAI_API_KEY | Clé API pour AssemblyAI | (requis) |
 | DEFAULT_LANGUAGE | Langue par défaut pour la transcription | `fr` |
 | SPEAKER_LABELS | Activer la reconnaissance des locuteurs | `True` |
+
+## Service de Transcription
+
+Le système utilise un service de transcription unifié basé sur AssemblyAI pour convertir les fichiers audio en texte avec identification des locuteurs.
+
+### Fonctionnalités principales du service de transcription
+
+- **Upload de fichier audio** - Prise en charge des formats MP3 et WAV
+- **Conversion automatique** - Conversion des formats audio vers WAV compatible
+- **Identification des locuteurs** - Reconnaissance et étiquetage des différents locuteurs
+- **Métadonnées** - Extraction de la durée et du nombre de locuteurs
+- **Traitement asynchrone** - Exécution en arrière-plan sans bloquer l'API
+- **Système de file d'attente** - Gestion des transcriptions multiples
+- **Reprise automatique** - Reprise des transcriptions interrompues au redémarrage
+
+### Scripts utilitaires
+
+- `check_pending_transcriptions.py` - Permet de vérifier et traiter manuellement les transcriptions en attente
+- `transcription_service.py` - Service autonome pour traiter les transcriptions en parallèle de l'API principale
 
 ## Documentation API
 

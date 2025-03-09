@@ -5,10 +5,17 @@ Routes simplifiées pour la gestion des réunions
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query
 from fastapi.logger import logger
 from typing import Optional
+import os
+from datetime import datetime
+import logging
 
 from ..core.security import get_current_user
-from ..services.simple_transcription import upload_and_transcribe
-from ..db.queries import get_meeting, get_meetings_by_user, update_meeting, delete_meeting
+from ..services.assemblyai import transcribe_meeting
+from ..db.queries import get_meeting, get_meetings_by_user, update_meeting, delete_meeting, create_meeting
+from ..core.config import settings
+
+# Configuration du logging
+logger = logging.getLogger("meeting-transcriber")
 
 router = APIRouter(prefix="/simple/meetings", tags=["Réunions Simplifiées"])
 
@@ -28,8 +35,37 @@ async def upload_meeting(
     en fonction de la durée de l'audio.
     """
     try:
-        # Utiliser le service simplifié pour l'upload et la transcription
-        meeting = await upload_and_transcribe(file, current_user["id"], title)
+        # Utiliser le titre ou le nom du fichier par défaut
+        if not title:
+            title = file.filename
+            
+        # 1. Sauvegarder le fichier audio
+        user_upload_dir = os.path.join("uploads", str(current_user["id"]))
+        os.makedirs(user_upload_dir, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{file.filename}"
+        file_path = os.path.join(user_upload_dir, filename)
+        
+        # Lire et sauvegarder le contenu du fichier
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+        
+        # 2. Créer l'entrée dans la base de données avec le statut "processing" dès le début
+        file_url = f"/{file_path}"
+        meeting_data = {
+            "title": title,
+            "file_url": file_url,
+            "transcript_status": "processing"  # Commencer directement en processing au lieu de pending
+        }
+        meeting = create_meeting(meeting_data, current_user["id"])
+        logger.info(f"Réunion créée avec le statut 'processing': {meeting['id']}")
+        
+        # 3. Lancer la transcription en arrière-plan
+        transcribe_meeting(meeting["id"], file_url, current_user["id"])
+        logger.info(f"Transcription lancée pour la réunion {meeting['id']}")
+        
         return meeting
     
     except Exception as e:

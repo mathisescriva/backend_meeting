@@ -10,57 +10,41 @@ import time
 # Chemin de la base de données
 DB_PATH = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
 
-# Pool de connexions pour SQLite (simple mais efficace)
-class ConnectionPool:
-    def __init__(self, db_path, max_connections=10, timeout=30):
+# Gestionnaire de connexions par thread pour SQLite
+class ThreadLocalConnectionManager:
+    def __init__(self, db_path):
         self.db_path = db_path
-        self.max_connections = max_connections
-        self.timeout = timeout
-        self.connections = []
-        self.in_use = set()
-        self.lock = threading.Lock()
+        self.local = threading.local()
         
     def get_connection(self):
-        start_time = time.time()
-        
-        while True:
-            with self.lock:
-                # Vérifier les connexions disponibles
-                for conn in self.connections:
-                    if conn not in self.in_use:
-                        self.in_use.add(conn)
-                        return conn
-                
-                # Créer une nouvelle connexion si possible
-                if len(self.connections) < self.max_connections:
-                    conn = sqlite3.connect(str(self.db_path))
-                    conn.row_factory = sqlite3.Row
-                    self.connections.append(conn)
-                    self.in_use.add(conn)
-                    return conn
+        # Vérifier si ce thread a déjà une connexion
+        if not hasattr(self.local, 'connection'):
+            # Créer une nouvelle connexion pour ce thread
+            self.local.connection = sqlite3.connect(str(self.db_path))
+            self.local.connection.row_factory = sqlite3.Row
             
-            # Attendre une connexion disponible
-            if time.time() - start_time > self.timeout:
-                raise TimeoutError("Impossible d'obtenir une connexion à la base de données")
-            time.sleep(0.1)
+        return self.local.connection
     
     def release_connection(self, conn):
-        with self.lock:
-            if conn in self.in_use:
-                self.in_use.remove(conn)
-                
+        # Ne rien faire - la connexion reste attachée au thread
+        pass
+    
     def close_all(self):
-        with self.lock:
-            for conn in self.connections:
-                try:
-                    conn.close()
-                except:
-                    pass
-            self.connections = []
-            self.in_use = set()
+        # Cette méthode n'est pas vraiment utilisée, mais on la garde pour compatibilité
+        pass
+        
+    def close_thread_connection(self):
+        # Fermer la connexion du thread actuel si elle existe
+        if hasattr(self.local, 'connection'):
+            try:
+                self.local.connection.close()
+            except Exception as e:
+                print(f"Erreur lors de la fermeture de la connexion: {e}")
+            finally:
+                del self.local.connection
 
-# Créer un pool de connexions global
-db_pool = ConnectionPool(DB_PATH, max_connections=50, timeout=60)
+# Créer un gestionnaire de connexions par thread global
+db_pool = ThreadLocalConnectionManager(DB_PATH)
 
 def get_password_hash(password: str) -> str:
     """Hash a password using bcrypt"""
@@ -76,10 +60,10 @@ def release_db_connection(conn):
     db_pool.release_connection(conn)
 
 def reset_db_pool():
-    """Réinitialiser le pool de connexions en cas de problème"""
+    """Réinitialiser le gestionnaire de connexions en cas de problème"""
     global db_pool
     db_pool.close_all()
-    db_pool = ConnectionPool(DB_PATH, max_connections=50, timeout=60)
+    db_pool = ThreadLocalConnectionManager(DB_PATH)
     return True
 
 def init_db():
@@ -125,9 +109,26 @@ def init_db():
                 transcript_text TEXT,
                 transcript_status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                duration_seconds INTEGER,
+                speakers_count INTEGER,
+                summary_text TEXT,
+                summary_status TEXT DEFAULT NULL,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         ''')
+        
+        # Vérifier si les colonnes summary_text et summary_status existent déjà
+        cursor.execute("PRAGMA table_info(meetings)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        # Ajouter les colonnes manquantes si nécessaire
+        if 'summary_text' not in columns:
+            cursor.execute("ALTER TABLE meetings ADD COLUMN summary_text TEXT")
+            print("Colonne summary_text ajoutée à la table meetings")
+            
+        if 'summary_status' not in columns:
+            cursor.execute("ALTER TABLE meetings ADD COLUMN summary_status TEXT DEFAULT NULL")
+            print("Colonne summary_status ajoutée à la table meetings")
         
         # Création d'index pour améliorer les performances
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_meeting_user ON meetings(user_id)')

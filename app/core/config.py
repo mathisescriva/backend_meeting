@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     ASSEMBLYAI_API_KEY: str = os.getenv("ASSEMBLYAI_API_KEY", "")
     ASSEMBLYAI_BASE_URL: str = "https://api.assemblyai.com/v2"
     
+    # Configuration Mistral AI
+    MISTRAL_API_KEY: str = os.getenv("MISTRAL_API_KEY", "")
+    
     # Configuration de la base de données
     DATABASE_URL: str = f"sqlite:///{BASE_DIR}/app.db"
     DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", "10"))

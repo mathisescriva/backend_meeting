@@ -13,7 +13,7 @@ from pathlib import Path
 # Constantes
 API_URL = "http://localhost:8000"
 AUTH_BASE = f"{API_URL}/auth"
-MEETING_BASE = f"{API_URL}"  # Les routes sont à la racine de l'API
+MEETING_BASE = f"{API_URL}/meetings"  # Les routes commencent par /meetings
 COLORS = {
     "GREEN": "\033[92m",
     "RED": "\033[91m",
@@ -108,15 +108,34 @@ def register_and_login():
         return None
 
 def get_sample_audio_file():
-    """Crée un fichier audio de test ou utilise un existant"""
-    test_dir = Path(__file__).parent / "tests" / "resources"
+    """Utilise le fichier Audio7min.mp3 pour le test"""
+    # Chercher d'abord dans le répertoire du projet
+    project_dir = Path(__file__).parent
+    
+    # Utiliser spécifiquement Audio7min.mp3
+    audio_file = project_dir / "Audio7min.mp3"
+    
+    if audio_file.exists():
+        print_colored(f"Utilisation du fichier audio: {audio_file}", "GREEN")
+        return str(audio_file)
+    
+    # Si Audio7min.mp3 n'existe pas, essayer d'autres fichiers
+    audio_files = [
+        project_dir / "test_audio.mp3",
+        project_dir / "test.mp3"
+    ]
+    
+    # Utiliser le premier fichier qui existe
+    for audio_file in audio_files:
+        if audio_file.exists():
+            print_colored(f"Audio7min.mp3 non trouvé, utilisation de: {audio_file}", "YELLOW")
+            return str(audio_file)
+    
+    # Si aucun fichier n'existe, créer un fichier vide pour le test
+    test_dir = project_dir / "tests" / "resources"
     test_file = test_dir / "test_audio.mp3"
     
-    if test_file.exists():
-        return str(test_file)
-    
-    # Si le fichier n'existe pas, on télécharge un fichier de test
-    print_colored("Le fichier audio de test n'existe pas, création d'un fichier vide...", "YELLOW")
+    print_colored("Aucun fichier audio existant trouvé, création d'un fichier vide...", "YELLOW")
     test_dir.mkdir(parents=True, exist_ok=True)
     
     # Création d'un fichier MP3 vide pour le test

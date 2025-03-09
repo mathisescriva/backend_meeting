@@ -10,3 +10,5 @@ requests==2.30.0
 bcrypt==4.0.1
 aiofiles==23.1.0
 loguru==0.7.0
+# AssemblyAI SDK - SDK officiel pour l'API AssemblyAI
+assemblyai==0.37.0

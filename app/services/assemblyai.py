@@ -1,21 +1,29 @@
-import requests
-import time
-import threading
-import asyncio
 import os
 import json
-import subprocess
-from pathlib import Path
-from ..core.config import settings
-from ..db.queries import update_meeting, get_meeting
-from fastapi.logger import logger
-import mimetypes
 import traceback
+import logging
+import time
+import requests
+from typing import Optional, Dict, Any, Tuple, List
 from datetime import datetime
+from pathlib import Path
+import mimetypes
+import subprocess
+import threading
 
-# API endpoints and key
+# Import du SDK officiel d'AssemblyAI
+import assemblyai as aai
+
+from ..core.config import settings
+from ..db.queries import update_meeting, get_meeting, normalize_transcript_format
+
+# Configuration pour AssemblyAI
 ASSEMBLY_AI_API_KEY = settings.ASSEMBLYAI_API_KEY
-ASSEMBLY_AI_API_URL = 'https://api.assemblyai.com/v2'
+# Configurer le SDK AssemblyAI
+aai.settings.api_key = ASSEMBLY_AI_API_KEY
+
+# Configuration du logging
+logger = logging.getLogger("meeting-transcriber")
 
 def convert_to_wav(input_path: str) -> str:
     """Convertit un fichier audio en WAV en utilisant ffmpeg"""
@@ -56,7 +64,7 @@ def convert_to_wav(input_path: str) -> str:
 
 def transcribe_meeting(meeting_id: str, file_url: str, user_id: str):
     """
-    Ajoute une réunion à la file d'attente pour transcription.
+    Lance la transcription d'une réunion en utilisant le SDK AssemblyAI.
     
     Args:
         meeting_id: Identifiant de la réunion
@@ -86,32 +94,16 @@ def transcribe_meeting(meeting_id: str, file_url: str, user_id: str):
         update_meeting(meeting_id, user_id, {"transcript_status": "processing"})
         logger.info(f"Statut de la réunion {meeting_id} mis à jour à 'processing'")
         
-        # Créer un dossier pour la file d'attente s'il n'existe pas
-        queue_dir = os.path.join(settings.UPLOADS_DIR.parent, "queue")
-        if not os.path.exists(queue_dir):
-            os.makedirs(queue_dir)
-        
-        queue_file = os.path.join(queue_dir, f"{meeting_id}.json")
-        with open(queue_file, "w") as f:
-            json.dump({
-                "meeting_id": meeting_id,
-                "file_url": file_url,
-                "user_id": user_id,
-                "created_at": datetime.now().isoformat()
-            }, f)
-            
-        logger.info(f"Fichier de queue créé: {queue_file}")
-                
         # Lancer dans un thread pour éviter de bloquer
-        logger.info(f"Création d'un thread pour la transcription de la réunion {meeting_id}")
+        logger.info(f"Lancement de la transcription de la réunion {meeting_id} avec le SDK AssemblyAI")
         thread = threading.Thread(
-            target=_process_transcription_wrapper,
-            args=(meeting_id, file_url, user_id, queue_file)
+            target=process_transcription,
+            args=(meeting_id, file_url, user_id)
         )
         # Définir comme non-daemon pour qu'il continue à s'exécuter même si le thread principal se termine
         thread.daemon = False
         thread.start()
-        logger.info(f"Thread de transcription lancé pour la réunion {meeting_id} avec ID {thread.ident}")
+        logger.info(f"Thread de transcription lancé pour la réunion {meeting_id}")
         
     except Exception as e:
         logger.error(f"Erreur lors de la mise en file d'attente pour transcription: {str(e)}")
@@ -119,36 +111,31 @@ def transcribe_meeting(meeting_id: str, file_url: str, user_id: str):
         # Mettre à jour le statut en "error"
         try:
             update_meeting(meeting_id, user_id, {
-                "transcript_status": "error",
+                "transcript_status": "error", 
                 "transcript_text": f"Erreur lors de la mise en file d'attente pour transcription: {str(e)}"
             })
         except Exception as db_error:
             logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
 
-def _process_transcription(meeting_id: str, file_url: str, user_id: str):
-    """Fonction principale pour traiter une transcription de réunion.
+def process_transcription(meeting_id: str, file_url: str, user_id: str):
+    """
+    Fonction principale pour traiter une transcription de réunion en utilisant le SDK AssemblyAI.
     
     Cette fonction exécute toutes les étapes:
-    1. Téléchargement du fichier vers AssemblyAI si nécessaire
-    2. Lancement de la transcription
-    3. Vérification périodique du statut
-    4. Mise à jour de la base de données avec le résultat
+    1. Préparation du fichier audio (local ou URL)
+    2. Lancement de la transcription via le SDK AssemblyAI
+    3. Mise à jour de la base de données avec le résultat
     """
     try:
         logger.info(f"*** DÉMARRAGE du processus de transcription pour {meeting_id} ***")
-        logger.info(f"ASSEMBLY_AI_API_URL: {ASSEMBLY_AI_API_URL}")
-        logger.info(f"ASSEMBLY_AI_API_KEY: {ASSEMBLY_AI_API_KEY[:4]}...{ASSEMBLY_AI_API_KEY[-4:]}")
-        logger.info(f"File URL: {file_url}")
         
-        # Si le fichier est local, nous devons d'abord l'uploader vers AssemblyAI
+        # Préparation du fichier audio
+        audio_source = file_url
+        
+        # Si le fichier est local, nous utilisons le chemin complet
         if file_url.startswith("/uploads/"):
-            # Chemin complet vers le fichier local
             logger.info(f"Fichier local détecté: {file_url}")
-            
             file_path = Path(settings.UPLOADS_DIR.parent / file_url.lstrip('/'))
-            
-            logger.info(f"Chemin complet: {file_path}")
-            logger.info(f"Le fichier existe: {os.path.exists(file_path)}")
             
             if not os.path.exists(file_path):
                 error_msg = f"Le fichier audio est introuvable: {file_path}"
@@ -158,45 +145,128 @@ def _process_transcription(meeting_id: str, file_url: str, user_id: str):
                     "transcript_text": error_msg
                 })
                 return
+                
+            audio_source = str(file_path)
+            logger.info(f"Utilisation du fichier local: {audio_source}")
+        else:
+            logger.info(f"Utilisation de l'URL externe: {audio_source}")
+        
+        # Configuration de la transcription avec diarisation des locuteurs
+        config = aai.TranscriptionConfig(
+            speaker_labels=True,
+            language_code="fr"  # Langue française par défaut
+        )
+        
+        try:
+            # Lancement de la transcription avec le SDK AssemblyAI en mode asynchrone
+            logger.info(f"Lancement de la transcription avec le SDK AssemblyAI pour: {audio_source}")
             
-            logger.info(f"Upload du fichier vers AssemblyAI: {file_path}")
+            # Utiliser submit() au lieu de transcribe() pour ne pas bloquer
+            transcriber = aai.Transcriber()
+            transcript_obj = transcriber.submit(audio_source, config)
+            logger.info(f"Transcription soumise avec ID: {transcript_obj.id}")
             
-            try:
-                # Version synchrone de l'upload du fichier
-                upload_url = _upload_file_to_assemblyai(str(file_path))
-                if not upload_url:
-                    raise Exception("L'upload du fichier a échoué, URL non reçue")
-                    
-                logger.info(f"Fichier uploadé avec succès: {upload_url}")
-            except Exception as upload_error:
-                error_msg = f"Erreur lors de l'upload du fichier: {str(upload_error)}"
-                logger.error(error_msg)
-                logger.error(traceback.format_exc())
+            # Attendre un court instant pour vérifier si la transcription est déjà terminée
+            time.sleep(2)
+            
+            # Vérifier le statut initial
+            # Attendre que la transcription soit terminée ou en erreur
+            # Le SDK gère automatiquement le polling
+            transcript = aai.Transcriber().transcribe(audio_source, config)
+            logger.info(f"Statut initial de la transcription: {transcript.status}")
+            
+            # Si la transcription n'est pas terminée, mettre à jour la base de données et sortir
+            # Le processus de vérification des transcriptions en attente s'occupera de la suite
+            if transcript.status != "completed" and transcript.status != "error":
+                logger.info(f"Transcription en cours pour {meeting_id}, ID AssemblyAI: {transcript_obj.id}")
+                # Stocker l'ID de transcription dans la base de données pour pouvoir le récupérer plus tard
                 update_meeting(meeting_id, user_id, {
-                    "transcript_status": "error",
-                    "transcript_text": error_msg
+                    "transcript_status": "processing",
+                    "transcript_text": f"Transcription en cours, ID: {transcript_obj.id}"
                 })
                 return
                 
-            # Utiliser l'URL d'upload comme source pour la transcription
-            audio_url = upload_url
-        else:
-            # Si c'est une URL externe, l'utiliser directement
-            audio_url = file_url
-            logger.info(f"Utilisation de l'URL externe pour la transcription: {audio_url}")
-        
-        # Préparer la requête pour lancer la transcription
-        logger.info("Préparation de la requête de transcription")
-        
-        # Version synchrone du démarrage de la transcription
-        try:
-            transcript_id = _start_transcription_assemblyai(audio_url)
-            logger.info(f"Transcription lancée avec ID: {transcript_id}")
+            # Si la transcription est déjà terminée (cas rare mais possible)
+            logger.info(f"Statut final de la transcription: {transcript.status}")
             
-            if not transcript_id:
-                raise Exception("ID de transcription non reçu dans la réponse")
+            if transcript.status == "completed":
+                # Extraction des données importantes
+                audio_duration = transcript.audio_duration or 0
+                logger.info(f"Durée audio: {audio_duration} secondes")
+                
+                # Extraction et comptage des locuteurs
+                speaker_count = 0
+                unique_speakers = set()
+                utterances_data = []
+                formatted_text = transcript.text or ""
+                
+                # Traitement des utterances si disponibles
+                if hasattr(transcript, 'utterances') and transcript.utterances:
+                    try:
+                        utterances_text = []
+                        for utterance in transcript.utterances:
+                            speaker = getattr(utterance, 'speaker', 'Unknown')
+                            text = getattr(utterance, 'text', '').strip()
+                            if speaker and text:
+                                unique_speakers.add(speaker)
+                                utterance_formatted = f"Speaker {speaker}: {text}"
+                                utterances_text.append(utterance_formatted)
+                                utterances_data.append({"speaker": speaker, "text": text})
+                        
+                        if utterances_text:
+                            formatted_text = "\n".join(utterances_text)
+                            logger.info(f"Texte formaté avec {len(utterances_text)} segments de locuteurs")
+                    except Exception as e:
+                        logger.warning(f"Erreur lors du traitement des utterances: {str(e)}")
+                else:
+                    logger.warning("Aucune utterance trouvée dans la transcription")
+                
+                # S'assurer qu'il y a au moins 1 locuteur
+                speaker_count = len(unique_speakers)
+                if speaker_count == 0:
+                    speaker_count = 1
+                    logger.warning("Aucun locuteur détecté, on force à 1")
+                
+                logger.info(f"Nombre de locuteurs détectés: {speaker_count}")
+                
+                # Normaliser le format du texte avant l'update
+                formatted_text = normalize_transcript_format(formatted_text)
+                
+                # Mise à jour de la base de données
+                update_data = {
+                    "transcript_text": formatted_text,
+                    "transcript_status": "completed",
+                    "duration_seconds": int(audio_duration),
+                    "speakers_count": speaker_count
+                }
+                
+                logger.info(f"Mise à jour de la base de données pour {meeting_id}")
+                update_meeting(meeting_id, user_id, update_data)
+                logger.info(f"Transcription terminée avec succès pour {meeting_id}")
+                return
+            
+            elif transcript.status == "error":
+                # Erreur lors de la transcription
+                error_message = getattr(transcript, 'error', 'Unknown error')
+                logger.error(f"Erreur de transcription: {error_message}")
+                
+                update_meeting(meeting_id, user_id, {
+                    "transcript_status": "error",
+                    "transcript_text": f"Erreur lors de la transcription: {error_message}"
+                })
+                return
+            
+            else:
+                # Statut inattendu
+                logger.error(f"Statut inattendu de la transcription: {transcript.status}")
+                update_meeting(meeting_id, user_id, {
+                    "transcript_status": "error",
+                    "transcript_text": f"La transcription a échoué avec le statut: {transcript.status}"
+                })
+                return
+                
         except Exception as e:
-            error_msg = f"Erreur lors du lancement de la transcription: {str(e)}"
+            error_msg = f"Erreur lors de la transcription: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
             update_meeting(meeting_id, user_id, {
@@ -204,264 +274,309 @@ def _process_transcription(meeting_id: str, file_url: str, user_id: str):
                 "transcript_text": error_msg
             })
             return
-                
-        # Vérifier périodiquement le statut de la transcription
-        max_attempts = 60  # 30 minutes maximum (60 tentatives * 30 secondes)
-        attempt = 1
-        
-        while attempt <= max_attempts:
-            logger.info(f"Vérification du statut de la transcription (tentative {attempt}/{max_attempts})")
-            status, transcript_text = check_transcription_status(transcript_id)
             
-            logger.info(f"Statut actuel: {status}")
-            
-            # Si la transcription est terminée, mettre à jour la réunion
-            if status == 'completed':
-                logger.info(f"Transcription terminée avec statut: {status}")
-                update_meeting(meeting_id, user_id, {
-                    "transcript_status": status,
-                    "transcript_text": transcript_text
-                })
-                logger.info(f"Statut mis à jour à '{status}' pour {meeting_id}")
-                logger.info(f"*** FIN du processus de transcription pour {meeting_id} ***")
-                return
-            
-            # Si la transcription a échoué, mettre à jour la réunion
-            if status == 'error':
-                logger.info(f"Transcription échouée avec statut: {status}")
-                error_message = transcript_text or "Une erreur s'est produite lors de la transcription."
-                update_meeting(meeting_id, user_id, {
-                    "transcript_status": status,
-                    "transcript_text": error_message
-                })
-                logger.info(f"Statut mis à jour à '{status}' pour {meeting_id}")
-                logger.info(f"*** FIN du processus de transcription pour {meeting_id} ***")
-                return
-            
-            # Attendre avant la prochaine vérification
-            logger.info("Attente de 30 secondes avant la prochaine vérification...")
-            time.sleep(30)
-            attempt += 1
-        
-        # Si on a atteint le nombre maximum de tentatives sans succès
-        logger.error(f"Timeout lors de la transcription (après {max_attempts} tentatives)")
-        
-        try:
-            update_meeting(meeting_id, user_id, {
-                "transcript_status": "error", 
-                "transcript_text": f"La transcription a pris trop de temps ou n'a pas abouti après {max_attempts} vérifications."
-            })
-            logger.info(f"Statut mis à jour à 'error' (timeout) pour {meeting_id}")
-        except Exception as db_error:
-            logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
-                
-        logger.info(f"*** FIN du processus de transcription pour {meeting_id} ***")
-                
     except Exception as e:
-        logger.error(f"Exception non gérée lors du traitement de la transcription: {str(e)}")
+        logger.error(f"Erreur non gérée lors de la transcription: {str(e)}")
         logger.error(traceback.format_exc())
         
         try:
             update_meeting(meeting_id, user_id, {
                 "transcript_status": "error",
-                "transcript_text": f"Exception non gérée lors de la transcription: {str(e)}"
+                "transcript_text": f"Erreur lors de la transcription: {str(e)}"
             })
         except Exception as db_error:
             logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
 
-def _process_transcription_wrapper(meeting_id: str, file_url: str, user_id: str, queue_file: str = None):
-    """Wrapper pour _process_transcription qui gère les exceptions et supprime le fichier de queue"""
-    try:
-        logger.info(f"Démarrage du wrapper de transcription pour {meeting_id}")
-        _process_transcription(meeting_id, file_url, user_id)
-        logger.info(f"Transcription terminée avec succès pour {meeting_id}")
-    except Exception as e:
-        logger.error(f"Exception dans le wrapper de transcription pour {meeting_id}: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-    finally:
-        # Supprimer le fichier de queue si présent
-        if queue_file and os.path.exists(queue_file):
-            try:
-                os.remove(queue_file)
-                logger.info(f"Fichier de queue supprimé: {queue_file}")
-            except Exception as e:
-                logger.error(f"Impossible de supprimer le fichier de queue {queue_file}: {str(e)}")
-
-# Versions de fonctions rendues publiques pour les tests
-async def upload_file_to_assemblyai(file_path: str, api_key: str = ASSEMBLY_AI_API_KEY):
-    """Télécharge un fichier audio vers AssemblyAI et retourne l'URL."""
-    upload_endpoint = f"{ASSEMBLY_AI_API_URL}/upload"
+def upload_file_to_assemblyai(file_path: str) -> str:
+    """
+    Upload un fichier vers AssemblyAI en utilisant le SDK officiel.
+    Cette fonction est maintenue pour compatibilité mais n'est plus nécessaire
+    car le SDK AssemblyAI gère automatiquement l'upload des fichiers locaux.
     
-    headers = {
-        "authorization": api_key
-    }
-    
-    try:
-        with open(file_path, 'rb') as f:
-            response = requests.post(
-                upload_endpoint,
-                headers=headers,
-                data=f
-            )
-            
-        if response.status_code == 200:
-            return response.json()["upload_url"]
-        else:
-            error_msg = response.json().get('error', 'Unknown error')
-            raise Exception(f"Échec de l'upload du fichier à AssemblyAI: {error_msg} (status: {response.status_code})")
-    except Exception as e:
-        raise Exception(f"Échec de l'upload du fichier à AssemblyAI: {str(e)}")
-
-async def start_transcription(audio_url: str, api_key: str = ASSEMBLY_AI_API_KEY, speaker_labels: bool = True, language_code: str = "fr"):
-    """Démarre une transcription sur AssemblyAI et retourne l'ID de la transcription."""
-    transcript_endpoint = f"{ASSEMBLY_AI_API_URL}/transcript"
-    
-    headers = {
-        "authorization": api_key,
-        "content-type": "application/json"
-    }
-    
-    transcript_request = {
-        "audio_url": audio_url,
-        "speaker_labels": speaker_labels,
-        "language_code": language_code
-    }
-    
-    try:
-        response = requests.post(
-            transcript_endpoint,
-            json=transcript_request,
-            headers=headers
-        )
+    Args:
+        file_path: Chemin vers le fichier à uploader
         
-        if response.status_code == 200:
-            return response.json()["id"]
-        else:
-            error_msg = response.json().get('error', 'Unknown error')
-            raise Exception(f"Échec du démarrage de la transcription: {error_msg} (status: {response.status_code})")
-    except Exception as e:
-        raise Exception(f"Échec du démarrage de la transcription: {str(e)}")
+    Returns:
+        str: URL du fichier uploadé (vide car géré par le SDK)
+    """
+    logger.warning("La fonction upload_file_to_assemblyai est dépréciée. Le SDK AssemblyAI gère automatiquement l'upload.")
+    return file_path  # Retourne simplement le chemin du fichier pour compatibilité
 
-def check_transcription_status(transcript_id: str, api_key: str = ASSEMBLY_AI_API_KEY):
-    """Vérifie le statut d'une transcription."""
-    try:
-        endpoint = f"https://api.assemblyai.com/v2/transcript/{transcript_id}"
+def start_transcription(audio_url: str, speakers_expected: Optional[int] = None, format_text: bool = False) -> str:
+    """
+    Démarre une transcription sur AssemblyAI.
+    Cette fonction est maintenue pour compatibilité mais utilise maintenant le SDK officiel.
+    
+    Args:
+        audio_url: URL du fichier audio à transcrire
+        speakers_expected: Nombre de locuteurs attendus (optionnel)
+        format_text: Si True, le texte retourné inclut les identifiants des locuteurs (Speaker A, etc.)
         
-        headers = {
-            "authorization": api_key,
-            "content-type": "application/json"
+    Returns:
+        str: ID de la transcription
+    """
+    logger.warning("La fonction start_transcription est dépréciée. Utilisez directement le SDK AssemblyAI.")
+    
+    # Configuration avec le SDK AssemblyAI
+    config = aai.TranscriptionConfig(
+        speaker_labels=True,
+        language_code="fr"
+    )
+    
+    # Optionnel: si nous avons une estimation du nombre de locuteurs
+    if speakers_expected is not None and speakers_expected > 1:
+        config.speakers_expected = speakers_expected
+    
+    try:
+        # Utiliser le SDK pour démarrer la transcription
+        transcriber = aai.Transcriber()
+        transcript = transcriber.submit(audio_url, config)
+        
+        # Retourner l'ID de la transcription
+        return transcript.id
+    except Exception as e:
+        logger.error(f"Erreur lors de la demande de transcription: {str(e)}")
+        raise Exception(f"Erreur lors de la demande de transcription: {str(e)}")
+
+def check_transcription_status(transcript_id: str) -> Dict:
+    """
+    Vérifie le statut d'une transcription en utilisant le SDK AssemblyAI.
+    Cette fonction est maintenue pour compatibilité mais utilise maintenant le SDK officiel.
+    
+    Args:
+        transcript_id: ID de la transcription
+        
+    Returns:
+        dict: Réponse complète de la transcription
+    """
+    logger.warning("La fonction check_transcription_status est dépréciée. Utilisez directement le SDK AssemblyAI.")
+    
+    try:
+        # Utiliser le SDK pour obtenir le statut de la transcription
+        transcriber = aai.Transcriber()
+        # Récupérer la transcription par son ID
+        # Le SDK gère automatiquement le polling
+        transcript = transcriber.get_by_id(transcript_id)
+        
+        # Convertir l'objet Transcript en dictionnaire pour compatibilité
+        result = {
+            'id': transcript.id,
+            'status': transcript.status,
+            'text': transcript.text,
+            'audio_duration': transcript.audio_duration
         }
         
-        logger.info(f"Vérification du statut de la transcription {transcript_id}")
-        response = requests.get(endpoint, headers=headers)
-        response.raise_for_status()
+        # Ajouter les utterances si disponibles
+        if hasattr(transcript, 'utterances') and transcript.utterances:
+            result['utterances'] = []
+            for utterance in transcript.utterances:
+                result['utterances'].append({
+                    'speaker': getattr(utterance, 'speaker', 'Unknown'),
+                    'text': getattr(utterance, 'text', '')
+                })
         
-        result = response.json()
-        status = result.get('status')
-        
-        logger.info(f"Statut de la transcription {transcript_id}: {status}")
-        
-        # Si la transcription est terminée, retourner le texte
-        if status == 'completed':
-            transcript_text = result.get('text', '')
-            return status, transcript_text
-        
-        # Si la transcription a échoué, retourner le message d'erreur
-        if status == 'error':
-            error_message = result.get('error', 'Erreur inconnue')
-            return status, error_message
-        
-        # Transcription en cours, retourner le statut
-        return status, None
-    except Exception as e:
-        logger.error(f"Erreur lors de la vérification du statut de la transcription: {e}")
-        logger.error(traceback.format_exc())
-        return "error", str(e)
-
-def _upload_file_to_assemblyai(file_path: str, api_key: str = ASSEMBLY_AI_API_KEY):
-    """Version synchrone pour télécharger un fichier audio vers AssemblyAI et retourner l'URL."""
-    upload_endpoint = f"{ASSEMBLY_AI_API_URL}/upload"
-    
-    headers = {
-        "authorization": api_key
-    }
-    
-    try:
-        with open(file_path, 'rb') as f:
-            response = requests.post(
-                upload_endpoint,
-                headers=headers,
-                data=f
-            )
-        
-        logger.info(f"Réponse d'upload AssemblyAI: {response.status_code} - {response.text[:100]}...")
+        # Ajouter l'erreur si disponible
+        if hasattr(transcript, 'error') and transcript.error:
+            result['error'] = transcript.error
             
-        if response.status_code == 200:
-            upload_url = response.json()["upload_url"]
-            logger.info(f"Upload réussi, URL: {upload_url}")
-            return upload_url
-        else:
-            error_msg = response.json().get('error', 'Unknown error')
-            logger.error(f"Échec de l'upload: {error_msg} (status: {response.status_code})")
-            raise Exception(f"Échec de l'upload du fichier à AssemblyAI: {error_msg} (status: {response.status_code})")
+        return result
+        
     except Exception as e:
-        logger.error(f"Exception lors de l'upload: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise Exception(f"Échec de l'upload du fichier à AssemblyAI: {str(e)}")
+        logger.error(f"Erreur lors de la vérification du statut: {str(e)}")
+        raise Exception(f"Erreur lors de la vérification du statut: {str(e)}")
 
-def _start_transcription_assemblyai(audio_url: str, api_key: str = ASSEMBLY_AI_API_KEY, speaker_labels: bool = True, language_code: str = "fr"):
-    """Version synchrone pour démarrer une transcription sur AssemblyAI et retourner l'ID de la transcription."""
-    endpoint = f"{ASSEMBLY_AI_API_URL}/transcript"
+def process_completed_transcript(meeting_id, user_id, transcript):
+    """
+    Traite une transcription terminée et met à jour la base de données.
     
-    headers = {
-        "authorization": api_key,
-        "content-type": "application/json"
-    }
-    
-    json_data = {
-        "audio_url": audio_url,
-        "language_code": language_code
-    }
-    
-    # Ajouter uniquement les options compatibles avec le français
-    if language_code == "en":
-        json_data["auto_highlights"] = True
-    
-    # Toujours ajouter speaker_labels car disponible en français
-    if speaker_labels:
-        json_data["speaker_labels"] = True
-    
+    Args:
+        meeting_id: ID de la réunion
+        user_id: ID de l'utilisateur
+        transcript: Objet Transcript du SDK AssemblyAI
+    """
     try:
-        response = requests.post(endpoint, json=json_data, headers=headers)
+        # Extraction des données importantes
+        audio_duration = transcript.audio_duration or 0
+        logger.info(f"Durée audio: {audio_duration} secondes")
         
-        logger.info(f"Réponse de transcription AssemblyAI: {response.status_code} - {response.text[:100]}...")
+        # Extraction et comptage des locuteurs
+        speaker_count = 0
+        unique_speakers = set()
+        utterances_data = []
+        formatted_text = transcript.text or ""
         
-        if response.status_code == 200:
-            transcript_id = response.json()["id"]
-            logger.info(f"Transcription démarrée avec ID: {transcript_id}")
-            return transcript_id
+        # Traitement des utterances si disponibles
+        if hasattr(transcript, 'utterances') and transcript.utterances:
+            try:
+                utterances_text = []
+                for utterance in transcript.utterances:
+                    speaker = getattr(utterance, 'speaker', 'Unknown')
+                    text = getattr(utterance, 'text', '').strip()
+                    if speaker and text:
+                        unique_speakers.add(speaker)
+                        utterance_formatted = f"Speaker {speaker}: {text}"
+                        utterances_text.append(utterance_formatted)
+                        utterances_data.append({"speaker": speaker, "text": text})
+                
+                if utterances_text:
+                    formatted_text = "\n".join(utterances_text)
+                    logger.info(f"Texte formaté avec {len(utterances_text)} segments de locuteurs")
+            except Exception as e:
+                logger.warning(f"Erreur lors du traitement des utterances: {str(e)}")
         else:
-            error_msg = response.json().get('error', 'Unknown error')
-            logger.error(f"Échec du démarrage de la transcription: {error_msg} (status: {response.status_code})")
-            raise Exception(f"Échec du démarrage de la transcription: {error_msg} (status: {response.status_code})")
+            logger.warning("Aucune utterance trouvée dans la transcription")
+        
+        # S'assurer qu'il y a au moins 1 locuteur
+        speaker_count = len(unique_speakers)
+        if speaker_count == 0:
+            speaker_count = 1
+            logger.warning("Aucun locuteur détecté, on force à 1")
+        
+        logger.info(f"Nombre de locuteurs détectés: {speaker_count}")
+        
+        # Normaliser le format du texte avant l'update
+        formatted_text = normalize_transcript_format(formatted_text)
+        
+        # Mise à jour de la base de données
+        update_data = {
+            "transcript_text": formatted_text,
+            "transcript_status": "completed",
+            "duration_seconds": int(audio_duration),
+            "speakers_count": speaker_count
+        }
+        
+        logger.info(f"Mise à jour de la base de données pour {meeting_id}")
+        update_meeting(meeting_id, user_id, update_data)
+        logger.info(f"Transcription terminée avec succès pour {meeting_id}")
+        
+        # Lancer la génération du résumé automatiquement
+        try:
+            from .mistral_summary import process_meeting_summary
+            logger.info(f"Lancement de la génération du résumé pour la réunion {meeting_id}")
+            import threading
+            summary_thread = threading.Thread(
+                target=process_meeting_summary,
+                args=(meeting_id, user_id)
+            )
+            summary_thread.daemon = True
+            summary_thread.start()
+            logger.info(f"Thread de génération du résumé lancé pour la réunion {meeting_id}")
+        except Exception as summary_error:
+            logger.error(f"Erreur lors du lancement de la génération du résumé: {str(summary_error)}")
     except Exception as e:
-        logger.error(f"Exception lors du démarrage de la transcription: {str(e)}")
+        logger.error(f"Erreur lors du traitement de la transcription terminée: {str(e)}")
         logger.error(traceback.format_exc())
-        raise Exception(f"Échec du démarrage de la transcription: {str(e)}")
+        update_meeting(meeting_id, user_id, {
+            "transcript_status": "error",
+            "transcript_text": f"Erreur lors du traitement de la transcription: {str(e)}"
+        })
 
-def _get_transcription_status_assemblyai(transcript_id: str):
-    """Récupère le statut d'une transcription sur AssemblyAI"""
-    transcript_endpoint = f"{ASSEMBLY_AI_API_URL}/transcript/{transcript_id}"
+def normalize_transcript_format(text):
+    """
+    Normalise le format du texte de transcription pour qu'il soit cohérent.
     
-    headers = {
-        "authorization": ASSEMBLY_AI_API_KEY
-    }
+    Args:
+        text: Texte de la transcription
+        
+    Returns:
+        str: Texte normalisé
+    """
+    if not text:
+        return ""
+        
+    # Si le texte contient déjà des marqueurs de locuteurs au format 'Speaker X: ', on le laisse tel quel
+    if "Speaker " in text and ": " in text:
+        return text
+        
+    # Sinon, on le considère comme un texte brut d'un seul locuteur
+    return f"Speaker A: {text}"
+
+def process_pending_transcriptions():
+    """
+    Traite toutes les transcriptions en attente ou bloquées en état 'processing'.
+    À exécuter au démarrage de l'application.
     
-    response = requests.get(transcript_endpoint, headers=headers)
+    Cette fonction utilise maintenant le SDK AssemblyAI pour un traitement plus efficace.
+    """
+    from ..db.queries import get_pending_transcriptions, get_meetings_by_status, get_meeting
     
-    if response.status_code == 200:
-        return response.json()
-    else:
-        error_msg = response.json().get('error', 'Unknown error')
-        raise Exception(f"Échec de la récupération du statut: {error_msg} (status: {response.status_code})")
+    # Récupérer toutes les transcriptions en attente
+    pending_meetings = get_pending_transcriptions()
+    logger.info(f"Transcriptions en attente: {len(pending_meetings)}")
+    
+    # Récupérer également les transcriptions bloquées en état 'processing'
+    processing_meetings = get_meetings_by_status('processing')
+    logger.info(f"Transcriptions bloquées en état 'processing': {len(processing_meetings)}")
+    
+    # Fusionner les deux listes
+    all_meetings_to_process = pending_meetings + processing_meetings
+    
+    if not all_meetings_to_process:
+        logger.info("Aucune transcription en attente ou bloquée trouvée")
+        return
+    
+    logger.info(f"Traitement de {len(all_meetings_to_process)} transcription(s) en attente ou bloquées")
+    
+    # Créer un transcriber pour réutilisation
+    transcriber = aai.Transcriber()
+    
+    # Traiter chaque transcription
+    for meeting in all_meetings_to_process:
+        try:
+            meeting_id = meeting['id']
+            user_id = meeting['user_id']
+            
+            # Vérifier si la réunion est en état 'processing'
+            if meeting['transcript_status'] == 'processing':
+                logger.info(f"Vérification de la réunion {meeting_id} en état 'processing'")
+                
+                # Essayer d'extraire l'ID de transcription AssemblyAI du texte
+                transcript_id = None
+                transcript_text = meeting.get('transcript_text', '')
+                
+                if transcript_text and 'ID:' in transcript_text:
+                    try:
+                        # Extraire l'ID de transcription du texte (format: 'Transcription en cours, ID: xyz')
+                        transcript_id = transcript_text.split('ID:')[-1].strip()
+                        logger.info(f"ID de transcription AssemblyAI extrait: {transcript_id}")
+                        
+                        # Vérifier le statut de la transcription
+                        # Récupérer la transcription par son ID
+                        # Le SDK gère automatiquement le polling
+                        transcript = transcriber.get_by_id(transcript_id)
+                        logger.info(f"Statut de la transcription {transcript_id}: {transcript.status}")
+                        
+                        if transcript.status == 'completed':
+                            # Traiter la transcription terminée
+                            logger.info(f"Transcription {transcript_id} terminée, mise à jour de la base de données")
+                            process_completed_transcript(meeting_id, user_id, transcript)
+                            continue
+                        elif transcript.status == 'error':
+                            # Gérer l'erreur
+                            error_message = getattr(transcript, 'error', 'Unknown error')
+                            logger.error(f"Erreur de transcription pour {meeting_id}: {error_message}")
+                            update_meeting(meeting_id, user_id, {
+                                "transcript_status": "error",
+                                "transcript_text": f"Erreur lors de la transcription: {error_message}"
+                            })
+                            continue
+                        else:
+                            # Toujours en cours, ne rien faire
+                            logger.info(f"Transcription {transcript_id} toujours en cours ({transcript.status})")
+                            continue
+                    except Exception as e:
+                        logger.error(f"Erreur lors de la vérification de la transcription {transcript_id}: {str(e)}")
+                        # Continuer avec le retraitement normal
+            
+            # Si on arrive ici, soit il n'y a pas d'ID de transcription, soit il y a eu une erreur
+            # On relance donc le processus de transcription depuis le début
+            logger.info(f"Lancement/relancement de la transcription pour {meeting_id}")
+            thread = threading.Thread(
+                target=process_transcription,
+                args=(meeting_id, meeting["file_url"], user_id)
+            )
+            thread.daemon = False
+            thread.start()
+            logger.info(f"Transcription lancée pour la réunion {meeting_id}")
+        except Exception as e:
+            logger.error(f"Erreur lors du traitement de la transcription pour {meeting.get('id', 'unknown')}: {str(e)}")

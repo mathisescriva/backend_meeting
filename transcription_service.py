@@ -44,10 +44,10 @@ except Exception as e:
 
 # Importer les services après l'initialisation de BASE_DIR
 sys.path.insert(0, str(BASE_DIR))
-# Utiliser les versions synchrones au lieu des versions asynchrones
-from app.services.assemblyai import _upload_file_to_assemblyai as upload_file_to_assemblyai
-from app.services.assemblyai import _start_transcription_assemblyai as start_transcription
-from app.services.assemblyai import _get_transcription_status_assemblyai as check_transcription_status
+# Utiliser les versions du service unifié
+from app.services.assemblyai import upload_file_to_assemblyai
+from app.services.assemblyai import start_transcription
+from app.services.assemblyai import check_transcription_status
 from app.core.config import settings
 
 def get_pending_transcriptions(max_age_hours=24):
@@ -98,30 +98,56 @@ def update_meeting_status(meeting_id, user_id, status, text=None, duration_secon
     """Met à jour le statut et le texte de transcription d'une réunion"""
     cursor = conn.cursor()
     try:
+        # Log détaillé des paramètres
+        logger.info(f"update_meeting_status appelé avec:")
+        logger.info(f"  meeting_id: {meeting_id}")
+        logger.info(f"  user_id: {user_id}")
+        logger.info(f"  status: {status}")
+        logger.info(f"  text: {text[:50]}..." if text else "  text: None")
+        logger.info(f"  duration_seconds: {duration_seconds} (type: {type(duration_seconds)})")
+        logger.info(f"  speakers_count: {speakers_count} (type: {type(speakers_count)})")
+        
         update_data = {"transcript_status": status}
         if text is not None:
             update_data["transcript_text"] = text
         if duration_seconds is not None:
             update_data["duration_seconds"] = duration_seconds
+            logger.info(f"Mise à jour de la durée audio: {duration_seconds} secondes pour la réunion {meeting_id}")
         if speakers_count is not None:
             update_data["speakers_count"] = speakers_count
+            logger.info(f"Mise à jour du nombre de locuteurs: {speakers_count} pour la réunion {meeting_id}")
             
         placeholders = ", ".join([f"{k} = ?" for k in update_data.keys()])
         values = list(update_data.values())
         
-        cursor.execute(
-            f"UPDATE meetings SET {placeholders} WHERE id = ? AND user_id = ?",
-            (*values, meeting_id, user_id)
-        )
+        query = f"UPDATE meetings SET {placeholders} WHERE id = ? AND user_id = ?"
+        params = (*values, meeting_id, user_id)
+        logger.info(f"Requête SQL: {query}")
+        logger.info(f"Paramètres: {params}")
+        
+        cursor.execute(query, params)
         conn.commit()
-        logger.info(f"Statut de la réunion {meeting_id} mis à jour: {status}")
+        
+        # Vérifier si des lignes ont été modifiées
+        if cursor.rowcount > 0:
+            logger.info(f"Statut de la réunion {meeting_id} mis à jour avec succès: {update_data}")
+        else:
+            logger.warning(f"Aucune ligne modifiée pour la réunion {meeting_id}. Vérification si la réunion existe...")
+            # Vérifier si la réunion existe
+            cursor.execute("SELECT COUNT(*) FROM meetings WHERE id = ? AND user_id = ?", (meeting_id, user_id))
+            count = cursor.fetchone()[0]
+            if count == 0:
+                logger.error(f"La réunion {meeting_id} n'existe pas pour l'utilisateur {user_id}")
+            else:
+                logger.warning(f"La réunion existe mais aucune modification n'a été effectuée (valeurs identiques?)")
+        
         return True
     except Exception as e:
         logger.error(f"Erreur lors de la mise à jour du statut: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         conn.rollback()
         return False
-    finally:
-        cursor.close()
 
 def process_transcription(meeting):
     """Traite une transcription en attente"""
@@ -163,14 +189,15 @@ def process_transcription(meeting):
     logger.info(f"Type MIME du fichier: {mime_type}")
     
     try:
-        # Si déjà en processing, attendre un peu plus longtemps avant de reprendre
+        # Si déjà en processing, vérifier si elle est bloquée
         if meeting['transcript_status'] == 'processing':
             # Si en processing depuis plus d'une heure, on considère que c'est bloqué
             created_time = datetime.fromisoformat(meeting['created_at'])
             if datetime.now() - created_time > timedelta(hours=1):
-                logger.warning(f"La transcription est bloquée en processing depuis plus d'une heure")
+                logger.warning(f"La transcription est bloquée en processing depuis plus d'une heure, reprise du traitement")
+                # On continue le traitement pour cette réunion bloquée
             else:
-                logger.info(f"La transcription est déjà en processing, on passe à la suivante")
+                logger.info(f"La transcription est déjà en processing depuis moins d'une heure, on passe à la suivante")
                 return True
         
         # Marquer comme en traitement
@@ -199,8 +226,24 @@ def process_transcription(meeting):
                 # Récupérer le texte avec mise en forme par interlocuteur
                 transcript_text = transcript_response.get('text', '')
                 
+                # Log la réponse complète pour le débogage
+                logger.info(f"Réponse complète de l'API: {transcript_response}")
+                
                 # Extraire la durée de l'audio (en secondes)
-                audio_duration = transcript_response.get('audio_duration', 0)
+                audio_duration = transcript_response.get('audio_duration')
+                logger.info(f"Durée audio brute extraite: {audio_duration}")
+                
+                if audio_duration is not None:
+                    try:
+                        audio_duration = int(float(audio_duration))
+                        logger.info(f"Durée audio convertie en entier: {audio_duration}")
+                    except (ValueError, TypeError):
+                        logger.warning(f"Impossible de convertir la durée audio en entier: {audio_duration}")
+                        # Garder la valeur telle quelle, mais s'assurer qu'elle n'est pas None
+                        audio_duration = audio_duration or 0
+                else:
+                    audio_duration = 0
+                    logger.warning("Durée audio non disponible, valeur par défaut à 0")
                 
                 # Si des informations par interlocuteur sont disponibles
                 utterances = transcript_response.get('utterances', [])
@@ -215,8 +258,40 @@ def process_transcription(meeting):
                         if text:
                             transcript_text += f"{speaker}: {text}\n"
                 
-                # Calculer le nombre de participants
-                speakers_count = len(speakers_set) if speakers_set else None
+                # Essayer d'abord d'obtenir le nombre de locuteurs directement de l'API
+                speakers_count = transcript_response.get('speaker_count')
+                logger.info(f"Nombre de locuteurs directement de l'API: {speakers_count}")
+                
+                # Si non disponible, calculer à partir des utterances
+                if speakers_count is None:
+                    # Calculer le nombre de participants à partir des utterances
+                    if speakers_set:
+                        speakers_count = len(speakers_set)
+                        logger.info(f"Nombre de locuteurs calculé à partir des utterances: {speakers_count}")
+                    else:
+                        # Essayer de compter les locuteurs à partir des mots
+                        words = transcript_response.get('words', [])
+                        speaker_ids_from_words = set()
+                        
+                        for word in words:
+                            if 'speaker' in word:
+                                speaker_ids_from_words.add(word['speaker'])
+                        
+                        if speaker_ids_from_words:
+                            speakers_count = len(speaker_ids_from_words)
+                            logger.info(f"Nombre de locuteurs calculé à partir des mots: {speakers_count}")
+                        else:
+                            speakers_count = None
+                            logger.warning("Impossible de déterminer le nombre de locuteurs")
+                
+                # Convertir en entier si possible
+                if speakers_count is not None:
+                    try:
+                        speakers_count = int(speakers_count)
+                        logger.info(f"Nombre de locuteurs converti en entier: {speakers_count}")
+                    except (ValueError, TypeError):
+                        logger.warning(f"Impossible de convertir le nombre de locuteurs en entier: {speakers_count}")
+                        # Garder la valeur telle quelle
                 
                 logger.info(f"Transcription terminée avec succès. Durée: {audio_duration}s, Participants: {speakers_count}")
                 update_meeting_status(
@@ -224,7 +299,7 @@ def process_transcription(meeting):
                     user_id, 
                     "completed", 
                     transcript_text,
-                    int(audio_duration) if audio_duration else None,
+                    audio_duration,
                     speakers_count
                 )
                 return True

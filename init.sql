@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS public.meetings (
     file_url TEXT NOT NULL,
     transcript_status TEXT DEFAULT 'pending',
     transcript_text TEXT,
+    duration_seconds INTEGER,
+    speakers_count INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
