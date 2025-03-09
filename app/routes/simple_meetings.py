@@ -108,12 +108,106 @@ async def get_meeting_details(
     Retourne toutes les informations de la réunion, y compris le texte de transcription
     si la transcription est terminée.
     """
-    meeting = get_meeting(meeting_id, current_user["id"])
+    try:
+        logger.info(f"Tentative de récupération des détails de la réunion {meeting_id} par l'utilisateur {current_user['id']}")
+        meeting = get_meeting(meeting_id, current_user["id"])
+        
+        if not meeting:
+            logger.warning(f"Réunion {meeting_id} non trouvée pour l'utilisateur {current_user['id']}")
+            return {
+                "status": "not_found",
+                "message": "Réunion non trouvée ou supprimée",
+                "id": meeting_id,
+                "deleted": True,
+                "transcript_status": "deleted",  # Ajouter cette propriété pour éviter l'erreur côté frontend
+                "success": False
+            }
+        
+        # Ajouter des informations supplémentaires pour faciliter le débogage côté frontend
+        meeting["status"] = "success"
+        meeting["success"] = True
+        meeting["deleted"] = False
+        
+        return meeting
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des détails de la réunion {meeting_id}: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Une erreur s'est produite lors de la récupération des détails: {str(e)}",
+            "id": meeting_id,
+            "deleted": False,
+            "transcript_status": "error",  # Ajouter cette propriété pour éviter l'erreur côté frontend
+            "success": False
+        }
+
+@router.delete("/{meeting_id}", response_model=dict)
+async def delete_simple_meeting(
+    meeting_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Supprime une réunion et ses données associées.
     
-    if not meeting:
-        raise HTTPException(
-            status_code=404,
-            detail={"message": "Réunion non trouvée"}
-        )
+    - **meeting_id**: Identifiant unique de la réunion
     
-    return meeting
+    Cette opération supprime à la fois les métadonnées de la réunion et le fichier audio associé.
+    """
+    try:
+        logger.info(f"Tentative de suppression de la réunion {meeting_id} par l'utilisateur {current_user['id']}")
+        
+        # Récupérer la réunion pour vérifier qu'elle existe et appartient à l'utilisateur
+        meeting = get_meeting(meeting_id, current_user["id"])
+        
+        if not meeting:
+            logger.warning(f"Réunion {meeting_id} non trouvée pour l'utilisateur {current_user['id']}")
+            return {
+                "status": "not_found",
+                "message": "Réunion non trouvée ou déjà supprimée",
+                "id": meeting_id,
+                "success": False
+            }
+        
+        # Supprimer la réunion de la base de données
+        result = delete_meeting(meeting_id, current_user["id"])
+        
+        if not result:
+            logger.error(f"Échec de la suppression de la réunion {meeting_id}")
+            return {
+                "status": "error",
+                "message": "Erreur lors de la suppression de la réunion",
+                "id": meeting_id,
+                "success": False
+            }
+        
+        # Supprimer le fichier audio si possible
+        try:
+            file_path = meeting.get("file_url", "").lstrip("/")
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Fichier audio supprimé: {file_path}")
+        except Exception as e:
+            logger.error(f"Erreur lors de la suppression du fichier audio: {str(e)}")
+            # Ne pas faire échouer l'opération si la suppression du fichier échoue
+        
+        logger.info(f"Réunion {meeting_id} supprimée avec succès")
+        return {
+            "status": "success",
+            "message": "Réunion supprimée avec succès",
+            "id": meeting_id,
+            "success": True,
+            "meeting_data": {
+                "id": meeting_id,
+                "title": meeting.get("title", ""),
+                "deleted": True,
+                "transcript_status": "deleted"
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de la suppression de la réunion {meeting_id}: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Une erreur s'est produite lors de la suppression: {str(e)}",
+            "id": meeting_id,
+            "success": False
+        }
