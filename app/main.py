@@ -27,6 +27,11 @@ async def lifespan(app: FastAPI):
     # Opérations de démarrage
     logger.info("Démarrage de l'API Meeting Transcriber")
     
+    # Créer les utilisateurs par défaut si nécessaire
+    from .db.seed import create_default_users
+    logger.info("Création des utilisateurs par défaut si nécessaire")
+    create_default_users()
+    
     # Traiter immédiatement les transcriptions en attente au démarrage
     from .services.assemblyai import process_pending_transcriptions
     logger.info("Traitement des transcriptions en attente au démarrage")

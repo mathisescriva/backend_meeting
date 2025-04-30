@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
-    # Pour la production, augmenter à 24h ou plus selon les besoins
+    # Pour la production, augmenter à 1 an pour l'utilisateur test
     if os.getenv("ENVIRONMENT") == "production":
-        ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 heures
+        ACCESS_TOKEN_EXPIRE_MINUTES = 525600  # 1 an (365 jours * 24 heures * 60 minutes)
     
     # Configuration CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:4000", "http://localhost:5174", "http://127.0.0.1:5000", "*"]
