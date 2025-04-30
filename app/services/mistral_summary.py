@@ -32,14 +32,21 @@ def generate_meeting_summary(transcript_text: str, meeting_title: Optional[str] 
         prompt = f"""Tu es un assistant spécialisé dans la création de comptes rendus de réunion.
         
         Voici la transcription d'une réunion{' intitulée "' + meeting_title + '"' if meeting_title else ''}. 
-        Crée un compte rendu structuré et détaillé qui inclut:
+        Crée un compte rendu structuré STRICTEMENT selon les 4 parties suivantes :
         
-        1. Un résumé des points clés discutés
-        2. Les décisions prises
-        3. Les actions à entreprendre avec leurs responsables si mentionnés
-        4. Les échéances importantes mentionnées
+        # Synthèse
+        Une synthèse concise de la réunion en quelques lignes seulement.
         
-        Utilise un format clair avec des titres, des listes à puces et des paragraphes bien organisés.
+        # Éléments discutés
+        Les principaux points et sujets abordés pendant la réunion, présentés sous forme de liste à puces.
+        
+        # Relevé de décisions
+        Toutes les décisions prises lors de la réunion, présentées sous forme de liste à puces.
+        
+        # Plan d'action
+        Les actions à entreprendre avec leurs responsables (si mentionnés) et les échéances (si mentionnées), présentées sous forme de liste à puces.
+        
+        Respecte IMPÉRATIVEMENT cette structure en 4 parties avec ces titres exacts. Utilise un format clair avec des listes à puces et des paragraphes bien organisés.
         
         Transcription:
         {transcript_text}
