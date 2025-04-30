@@ -5,43 +5,93 @@ from .database import get_db_connection, release_db_connection
 import logging
 
 def create_meeting(meeting_data, user_id):
-    """Créer une nouvelle réunion"""
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        
-        meeting_id = str(uuid.uuid4())
-        created_at = datetime.utcnow().isoformat()
-        
-        # Utiliser le statut fourni ou 'pending' par défaut
-        transcript_status = meeting_data.get("transcript_status", "pending")
-        
-        cursor.execute(
-            """
-            INSERT INTO meetings (
-                id, user_id, title, file_url, 
-                transcript_status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                meeting_id, 
-                user_id, 
-                meeting_data["title"], 
-                meeting_data["file_url"], 
-                transcript_status, 
-                created_at
+    """
+    Créer une nouvelle réunion avec une meilleure gestion des transactions
+    pour éviter les erreurs 'database is locked'
+    """
+    # Logger pour le débogage
+    logger = logging.getLogger("fastapi")
+    logger.info(f"Création d'une nouvelle réunion pour l'utilisateur {user_id}")
+    
+    # Récupérer une nouvelle connexion pour cette transaction
+    conn = None
+    meeting = None
+    retry_count = 0
+    max_retries = 3
+    
+    while retry_count < max_retries:
+        try:
+            # Obtenir une nouvelle connexion
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Générer un ID unique pour la réunion
+            meeting_id = str(uuid.uuid4())
+            created_at = datetime.utcnow().isoformat()
+            
+            # Utiliser le statut fourni ou 'pending' par défaut
+            transcript_status = meeting_data.get("transcript_status", "pending")
+            
+            # Exécuter la requête d'insertion avec un timeout plus long
+            logger.info(f"Insertion de la réunion {meeting_id} dans la base de données")
+            cursor.execute(
+                """
+                INSERT INTO meetings (
+                    id, user_id, title, file_url, 
+                    transcript_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    meeting_id, 
+                    user_id, 
+                    meeting_data["title"], 
+                    meeting_data["file_url"], 
+                    transcript_status, 
+                    created_at
+                )
             )
-        )
+            
+            # Valider la transaction immédiatement
+            conn.commit()
+            logger.info(f"Réunion {meeting_id} créée avec succès")
+            
+            # Récupérer la réunion créée dans une nouvelle transaction
+            cursor.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+            meeting = cursor.fetchone()
+            
+            # Si tout s'est bien passé, sortir de la boucle
+            break
+            
+        except sqlite3.OperationalError as e:
+            # Gestion spécifique de l'erreur 'database is locked'
+            if "database is locked" in str(e):
+                retry_count += 1
+                logger.warning(f"Base de données verrouillée, tentative {retry_count}/{max_retries}")
+                
+                # Attendre un peu avant de réessayer
+                import time
+                time.sleep(1)  # Attendre 1 seconde avant de réessayer
+                
+                # Fermer et réinitialiser la connexion
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+            else:
+                # Autres erreurs SQLite
+                logger.error(f"Erreur SQLite lors de la création de la réunion: {str(e)}")
+                raise
+        except Exception as e:
+            # Autres erreurs non SQLite
+            logger.error(f"Erreur lors de la création de la réunion: {str(e)}")
+            raise
+        finally:
+            # Libérer la connexion dans tous les cas
+            if conn:
+                release_db_connection(conn)
         
-        conn.commit()
-        
-        # Récupérer la réunion créée
-        cursor.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
-        meeting = cursor.fetchone()
-        
-        return dict(meeting) if meeting else None
-    finally:
-        release_db_connection(conn)
+    return dict(meeting) if meeting else None
 
 def get_meeting(meeting_id, user_id):
     """Récupérer les détails d'une réunion spécifique"""

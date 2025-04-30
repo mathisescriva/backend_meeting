@@ -19,9 +19,19 @@ class ThreadLocalConnectionManager:
     def get_connection(self):
         # Vérifier si ce thread a déjà une connexion
         if not hasattr(self.local, 'connection'):
-            # Créer une nouvelle connexion pour ce thread
-            self.local.connection = sqlite3.connect(str(self.db_path))
+            # Créer une nouvelle connexion pour ce thread avec un timeout plus long
+            # et une configuration pour améliorer la gestion des verrous
+            self.local.connection = sqlite3.connect(
+                str(self.db_path),
+                timeout=60.0,  # Attendre jusqu'à 60 secondes pour les verrous
+                isolation_level='IMMEDIATE'  # Réduire les conflits de verrous
+            )
             self.local.connection.row_factory = sqlite3.Row
+            
+            # Configuration pour améliorer la performance et la stabilité
+            self.local.connection.execute('PRAGMA journal_mode = WAL')  # Write-Ahead Logging pour de meilleures performances
+            self.local.connection.execute('PRAGMA synchronous = NORMAL')  # Bon équilibre entre performance et sécurité
+            self.local.connection.execute('PRAGMA busy_timeout = 30000')  # Attendre 30 secondes si la BD est occupée
             
         return self.local.connection
     
