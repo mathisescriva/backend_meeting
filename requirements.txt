@@ -16,5 +16,3 @@ assemblyai==0.37.0
 gunicorn==21.2.0
 # Pour la validation des emails dans Pydantic
 email-validator==2.1.1
-# Pour la gestion des configurations avec Pydantic
-pydantic-settings==1.2.0
