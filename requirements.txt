@@ -17,4 +17,4 @@ gunicorn==21.2.0
 # Pour la validation des emails dans Pydantic
 email-validator==2.1.1
 # Pour la gestion des configurations avec Pydantic
-pydantic-settings==2.2.1
+pydantic-settings==1.2.0
