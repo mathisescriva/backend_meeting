@@ -12,3 +12,5 @@ aiofiles==23.1.0
 loguru==0.7.0
 # AssemblyAI SDK - SDK officiel pour l'API AssemblyAI
 assemblyai==0.37.0
+# Pour le du00e9ploiement sur Render
+gunicorn==21.2.0
