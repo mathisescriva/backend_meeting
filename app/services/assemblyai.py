@@ -124,24 +124,19 @@ def transcribe_meeting(meeting_id: str, file_url: str, user_id: str):
         except Exception as db_error:
             logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
 
-# Définir une fonction avec backoff pour les opérations de transcription
-@backoff.on_exception(backoff.expo, 
-                     (requests.exceptions.RequestException, ConnectionError, TimeoutError),
-                     max_tries=5,  # Maximum 5 tentatives
-                     max_time=300,  # Temps maximum total de 5 minutes
-                     jitter=backoff.full_jitter)  # Ajouter du jitter pour éviter les collisions
-def transcribe_with_retry(transcriber, audio_source, config):
-    """Fonction qui tente de transcrire avec retry et backoff exponentiel"""
+# Fonction simplifiée pour soumettre une transcription avec gestion d'erreur basique
+def transcribe_simple(transcriber, audio_source, config):
+    """Fonction simplifiée qui tente de transcrire sans dépendance à backoff"""
     try:
         return transcriber.submit(audio_source, config)
     except Exception as e:
-        logger.error(f"Erreur lors de la transcription avec retry: {str(e)}")
+        logger.error(f"Erreur lors de la transcription: {str(e)}")
         # Si c'est une erreur de connexion au serveur Render, ajouter un message spécifique
         if "Cannot connect to backend server" in str(e) or "Network connection error" in str(e):
             error_msg = (
-                f"Erreur de connexion au serveur. Cela peut être dû au plan gratuit de Render "
-                f"qui met le serveur en veille après 15 minutes d'inactivité. "
-                f"Veuillez réessayer dans quelques instants ou envisager une mise à niveau vers un plan payant."
+                f"Erreur de connexion au serveur. Cela peut être dû au plan Render "
+                f"qui a des limitations de ressources. "
+                f"Veuillez réessayer dans quelques instants."
             )
             logger.error(error_msg)
             raise Exception(error_msg) from e
