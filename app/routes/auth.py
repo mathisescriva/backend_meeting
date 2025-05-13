@@ -199,3 +199,36 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
         del current_user["hashed_password"]
     
     return current_user
+
+@router.post("/refresh-token", response_model=dict, tags=["Authentication"])
+async def refresh_token(current_user: dict = Depends(get_current_user)):
+    """
+    Rafraîchit le token JWT de l'utilisateur actuellement connecté.
+    
+    Cette route permet de prolonger la session de l'utilisateur sans qu'il ait à se reconnecter.
+    Elle nécessite un token JWT encore valide et génère un nouveau token avec une durée de validité renouvelée.
+    
+    Exemple de réponse:
+    ```json
+    {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "token_type": "bearer",
+      "expires_in": 14400
+    }
+    ```
+    """
+    try:
+        # Création d'un nouveau token JWT avec une durée de validité renouvelée
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": current_user["id"]},  # Utiliser l'ID comme sujet du token
+            expires_delta=access_token_expires
+        )
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60  # Conversion en secondes
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors du rafraîchissement du token: {str(e)}")

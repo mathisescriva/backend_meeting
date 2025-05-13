@@ -35,7 +35,22 @@ async def upload_meeting(
     3. Démarrage synchrone de la transcription via AssemblyAI
     
     La transcription peut prendre du temps en fonction de la durée de l'audio.
+    
+    Améliorations de sécurité:
+    - Vérification de l'authentification avant de commencer le traitement
+    - Sauvegarde temporaire du fichier pour éviter la perte de données
     """
+    # Vérification explicite de l'authentification pour éviter les pertes de données
+    if not current_user or "id" not in current_user:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "message": "Vous n'êtes pas authentifié ou votre session a expiré",
+                "type": "AUTH_ERROR",
+                "action": "Veuillez vous reconnecter et réessayer"
+            }
+        )
+        
     if not title:
         title = file.filename
         

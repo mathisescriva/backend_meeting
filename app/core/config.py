@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Paramètres de sécurité
     JWT_SECRET: str = os.getenv("JWT_SECRET", "super-secret-key-deve-only")
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 240  # 4 heures au lieu de 30 minutes
     
     # Pour la production, augmenter à 1 an pour l'utilisateur test
     if os.getenv("ENVIRONMENT") == "production":

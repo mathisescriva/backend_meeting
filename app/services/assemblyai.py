@@ -125,9 +125,39 @@ def process_transcription(meeting_id: str, file_url: str, user_id: str):
     1. Préparation du fichier audio (local ou URL)
     2. Lancement de la transcription via le SDK AssemblyAI
     3. Mise à jour de la base de données avec le résultat
+    
+    Améliorations:
+    - Meilleure gestion des erreurs d'authentification
+    - Sauvegarde des fichiers en cas d'erreur
+    - Journalisation détaillée pour faciliter le débogage
     """
     try:
         logger.info(f"*** DÉMARRAGE du processus de transcription pour {meeting_id} ***")
+        
+        # Vérifier d'abord si le meeting existe toujours et si l'utilisateur est valide
+        meeting = get_meeting(meeting_id, user_id)
+        if not meeting:
+            logger.error(f"Erreur d'authentification ou meeting introuvable: {meeting_id}, user: {user_id}")
+            # Créer un dossier de sauvegarde pour les fichiers orphelins
+            recovery_dir = Path(settings.UPLOADS_DIR.parent / "recovery")
+            recovery_dir.mkdir(exist_ok=True)
+            
+            # Préparation du fichier audio pour sauvegarde
+            audio_source = file_url
+            
+            # Si le fichier est local, nous le sauvegardons dans le dossier de récupération
+            if file_url.startswith("/uploads/"):
+                file_path = Path(settings.UPLOADS_DIR.parent / file_url.lstrip('/'))
+                if os.path.exists(file_path):
+                    # Sauvegarder le fichier dans le dossier de récupération
+                    recovery_file = recovery_dir / f"recovery_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.path.basename(file_path)}"
+                    try:
+                        import shutil
+                        shutil.copy2(file_path, recovery_file)
+                        logger.info(f"Fichier sauvegardé pour récupération: {recovery_file}")
+                    except Exception as e:
+                        logger.error(f"Impossible de sauvegarder le fichier: {str(e)}")
+            return
         
         # Préparation du fichier audio
         audio_source = file_url
