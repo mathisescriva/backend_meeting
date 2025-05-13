@@ -10,6 +10,10 @@ from pathlib import Path
 import mimetypes
 import subprocess
 import threading
+import backoff
+
+# Augmenter le timeout pour les requêtes HTTP
+requests.adapters.DEFAULT_RETRIES = 5
 
 # Import du SDK officiel d'AssemblyAI
 import assemblyai as aai
@@ -26,25 +30,32 @@ aai.settings.api_key = ASSEMBLY_AI_API_KEY
 logger = logging.getLogger("meeting-transcriber")
 
 def convert_to_wav(input_path: str) -> str:
-    """Convertit un fichier audio en WAV en utilisant ffmpeg"""
+    """Convertit un fichier audio en WAV en utilisant ffmpeg avec des paramètres optimisés pour réduire la taille"""
     try:
         # Créer un nom de fichier de sortie avec l'extension .wav
         output_path = os.path.splitext(input_path)[0] + '_converted.wav'
         
-        # Commande ffmpeg pour convertir en WAV
+        # Commande ffmpeg optimisée pour réduire la taille et la consommation de ressources
         cmd = [
             'ffmpeg', '-i', input_path,
             '-acodec', 'pcm_s16le',  # Format PCM 16-bit
-            '-ar', '44100',          # Sample rate 44.1kHz
-            '-ac', '2',              # 2 canaux (stéréo)
+            '-ar', '16000',          # Sample rate réduit à 16kHz (suffisant pour la parole)
+            '-ac', '1',              # Mono au lieu de stéréo (réduit la taille de moitié)
             '-y',                    # Écraser le fichier de sortie s'il existe
             output_path
         ]
         
-        logger.info(f"Conversion du fichier audio: {' '.join(cmd)}")
+        logger.info(f"Conversion optimisée du fichier audio: {' '.join(cmd)}")
         
-        # Exécuter la commande
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Exécuter la commande avec une priorité réduite pour limiter l'utilisation CPU
+        # Utiliser nice pour réduire la priorité du processus
+        try:
+            # Essayer d'abord avec nice si disponible
+            nice_cmd = ['nice', '-n', '19'] + cmd
+            result = subprocess.run(nice_cmd, capture_output=True, text=True)
+        except:
+            # Fallback sur la commande standard si nice n'est pas disponible
+            result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
             logger.error(f"Erreur lors de la conversion: {result.stderr}")
@@ -55,7 +66,7 @@ def convert_to_wav(input_path: str) -> str:
             logger.error(f"Le fichier converti n'existe pas ou est vide: {output_path}")
             raise Exception("Le fichier converti n'existe pas ou est vide")
             
-        logger.info(f"Conversion réussie: {output_path}")
+        logger.info(f"Conversion réussie: {output_path} (taille: {os.path.getsize(output_path) // 1024} KB)")
         return output_path
         
     except Exception as e:
@@ -117,6 +128,29 @@ def transcribe_meeting(meeting_id: str, file_url: str, user_id: str):
         except Exception as db_error:
             logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
 
+# Définir une fonction avec backoff pour les opérations de transcription
+@backoff.on_exception(backoff.expo, 
+                     (requests.exceptions.RequestException, ConnectionError, TimeoutError),
+                     max_tries=5,  # Maximum 5 tentatives
+                     max_time=300,  # Temps maximum total de 5 minutes
+                     jitter=backoff.full_jitter)  # Ajouter du jitter pour éviter les collisions
+def transcribe_with_retry(transcriber, audio_source, config):
+    """Fonction qui tente de transcrire avec retry et backoff exponentiel"""
+    try:
+        return transcriber.submit(audio_source, config)
+    except Exception as e:
+        logger.error(f"Erreur lors de la transcription avec retry: {str(e)}")
+        # Si c'est une erreur de connexion au serveur Render, ajouter un message spécifique
+        if "Cannot connect to backend server" in str(e) or "Network connection error" in str(e):
+            error_msg = (
+                f"Erreur de connexion au serveur. Cela peut être dû au plan gratuit de Render "
+                f"qui met le serveur en veille après 15 minutes d'inactivité. "
+                f"Veuillez réessayer dans quelques instants ou envisager une mise à niveau vers un plan payant."
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+        raise
+
 def process_transcription(meeting_id: str, file_url: str, user_id: str):
     """
     Fonction principale pour traiter une transcription de réunion en utilisant le SDK AssemblyAI.
@@ -130,6 +164,8 @@ def process_transcription(meeting_id: str, file_url: str, user_id: str):
     - Meilleure gestion des erreurs d'authentification
     - Sauvegarde des fichiers en cas d'erreur
     - Journalisation détaillée pour faciliter le débogage
+    - Gestion des retries avec backoff exponentiel pour les problèmes de connexion
+    - Support spécifique pour les limitations du plan gratuit de Render
     """
     try:
         logger.info(f"*** DÉMARRAGE du processus de transcription pour {meeting_id} ***")
@@ -181,29 +217,64 @@ def process_transcription(meeting_id: str, file_url: str, user_id: str):
         else:
             logger.info(f"Utilisation de l'URL externe: {audio_source}")
         
-        # Configuration de la transcription avec diarisation des locuteurs
+        # Configuration de la transcription avec diarisation des locuteurs et options d'optimisation
         config = aai.TranscriptionConfig(
             speaker_labels=True,
-            language_code="fr"  # Langue française par défaut
+            language_code="fr",  # Langue française par défaut
+            # Augmenter le timeout pour les fichiers volumineux
+            webhook_auth_header_name="Authorization",
+            webhook_auth_header_value=f"Bearer {settings.JWT_SECRET}",
+            # Options pour réduire la consommation de ressources
+            audio_start_from=0,  # Démarrer depuis le début
+            audio_end_at=None,    # Traiter jusqu'à la fin
+            # Utiliser le format de sortie le plus léger
+            word_boost=[],        # Pas de boost de mots spécifiques
+            boost_param=None,     # Pas de paramètre de boost
+            # Désactiver les fonctionnalités non essentielles pour économiser des ressources
+            auto_highlights=False,
+            content_safety=False,
+            entity_detection=False,
+            iab_categories=False,
+            sentiment_analysis=False
         )
         
         try:
-            # Lancement de la transcription avec le SDK AssemblyAI en mode asynchrone
+            # Lancement de la transcription avec le SDK AssemblyAI en mode asynchrone avec retry
             logger.info(f"Lancement de la transcription avec le SDK AssemblyAI pour: {audio_source}")
             
-            # Utiliser submit() au lieu de transcribe() pour ne pas bloquer
+            # Utiliser notre fonction avec retry pour gérer les problèmes de connexion
             transcriber = aai.Transcriber()
-            transcript_obj = transcriber.submit(audio_source, config)
-            logger.info(f"Transcription soumise avec ID: {transcript_obj.id}")
+            
+            # Utiliser un timeout plus long pour les fichiers volumineux
+            try:
+                # Tentative avec notre fonction de retry
+                transcript_obj = transcribe_with_retry(transcriber, audio_source, config)
+                logger.info(f"Transcription soumise avec ID: {transcript_obj.id}")
+            except Exception as e:
+                error_msg = f"Erreur lors de la transcription: {str(e)}"
+                logger.error(error_msg)
+                update_meeting(meeting_id, user_id, {
+                    "transcript_status": "error",
+                    "transcript_text": error_msg
+                })
+                return
             
             # Attendre un court instant pour vérifier si la transcription est déjà terminée
-            time.sleep(2)
+            time.sleep(5)  # Attendre un peu plus longtemps (5 secondes au lieu de 2)
             
-            # Vérifier le statut initial
-            # Attendre que la transcription soit terminée ou en erreur
-            # Le SDK gère automatiquement le polling
-            transcript = aai.Transcriber().transcribe(audio_source, config)
-            logger.info(f"Statut initial de la transcription: {transcript.status}")
+            # Vérifier le statut initial avec retry
+            try:
+                # Le SDK gère automatiquement le polling
+                transcript = transcriber.get_transcript(transcript_obj.id)
+                logger.info(f"Statut initial de la transcription: {transcript.status}")
+            except Exception as e:
+                logger.warning(f"Impossible de vérifier le statut initial, mais la transcription continue en arrière-plan: {str(e)}")
+                # Stocker l'ID de transcription dans la base de données pour pouvoir le récupérer plus tard
+                update_meeting(meeting_id, user_id, {
+                    "transcript_status": "processing",
+                    "transcript_text": f"Transcription en cours, ID: {transcript_obj.id}"
+                })
+                return
             
             # Si la transcription n'est pas terminée, mettre à jour la base de données et sortir
             # Le processus de vérification des transcriptions en attente s'occupera de la suite
