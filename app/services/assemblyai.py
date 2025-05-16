@@ -469,11 +469,25 @@ def normalize_transcript_format(text):
 def process_pending_transcriptions():
     """
     Traite toutes les transcriptions en attente ou bloquées en état 'processing'.
-    À exécuter au démarrage de l'application.
+    À exécuter au démarrage de l'application et périodiquement.
     
-    Cette fonction utilise maintenant le SDK AssemblyAI pour un traitement plus efficace.
+    Cette fonction utilise l'API REST d'AssemblyAI pour être plus fiable.
     """
+    import requests
     from ..db.queries import get_pending_transcriptions, get_meetings_by_status, get_meeting
+    from ..core.config import settings
+    
+    # Récupérer la clé API AssemblyAI
+    api_key = settings.ASSEMBLYAI_API_KEY
+    if not api_key:
+        logger.error("La clé API AssemblyAI n'est pas définie dans les variables d'environnement")
+        return
+    
+    # Configuration de l'API AssemblyAI
+    headers = {
+        "authorization": api_key,
+        "content-type": "application/json"
+    }
     
     # Récupérer toutes les transcriptions en attente
     pending_meetings = get_pending_transcriptions()
@@ -492,14 +506,27 @@ def process_pending_transcriptions():
     
     logger.info(f"Traitement de {len(all_meetings_to_process)} transcription(s) en attente ou bloquées")
     
-    # Créer un transcriber pour réutilisation
-    transcriber = aai.Transcriber()
+    # Récupérer les transcriptions récentes d'AssemblyAI
+    recent_transcripts = []
+    try:
+        url = "https://api.assemblyai.com/v2/transcript"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            recent_transcripts = response.json().get('transcripts', [])
+            logger.info(f"Récupération de {len(recent_transcripts)} transcriptions récentes d'AssemblyAI")
+        else:
+            logger.error(f"Erreur lors de la récupération des transcriptions: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des transcriptions récentes: {str(e)}")
     
     # Traiter chaque transcription
     for meeting in all_meetings_to_process:
         try:
             meeting_id = meeting['id']
             user_id = meeting['user_id']
+            file_url = meeting.get('file_url', '')
+            file_name = os.path.basename(file_url) if file_url else ''
             
             # Vérifier si la réunion est en état 'processing'
             if meeting['transcript_status'] == 'processing':
@@ -515,43 +542,125 @@ def process_pending_transcriptions():
                         transcript_id = transcript_text.split('ID:')[-1].strip()
                         logger.info(f"ID de transcription AssemblyAI extrait: {transcript_id}")
                         
-                        # Vérifier le statut de la transcription
-                        # Récupérer la transcription par son ID
-                        # Le SDK gère automatiquement le polling
-                        transcript = transcriber.get_by_id(transcript_id)
-                        logger.info(f"Statut de la transcription {transcript_id}: {transcript.status}")
+                        # Vérifier le statut de la transcription via l'API REST
+                        url = f"https://api.assemblyai.com/v2/transcript/{transcript_id}"
+                        response = requests.get(url, headers=headers)
                         
-                        if transcript.status == 'completed':
-                            # Traiter la transcription terminée
-                            logger.info(f"Transcription {transcript_id} terminée, mise à jour de la base de données")
-                            process_completed_transcript(meeting_id, user_id, transcript)
-                            continue
-                        elif transcript.status == 'error':
-                            # Gérer l'erreur
-                            error_message = getattr(transcript, 'error', 'Unknown error')
-                            logger.error(f"Erreur de transcription pour {meeting_id}: {error_message}")
-                            update_meeting(meeting_id, user_id, {
-                                "transcript_status": "error",
-                                "transcript_text": f"Erreur lors de la transcription: {error_message}"
-                            })
-                            continue
+                        if response.status_code == 200:
+                            transcript_data = response.json()
+                            status = transcript_data.get('status')
+                            logger.info(f"Statut de la transcription {transcript_id}: {status}")
+                            
+                            if status == 'completed':
+                                # Créer un objet compatible avec process_completed_transcript
+                                class TranscriptObject:
+                                    def __init__(self, data):
+                                        self.id = data.get('id')
+                                        self.status = data.get('status')
+                                        self.text = data.get('text')
+                                        self.audio_duration = data.get('audio_duration')
+                                        self.utterances = []
+                                        
+                                        # Traiter les utterances si disponibles
+                                        utterances_data = data.get('utterances', [])
+                                        if utterances_data and isinstance(utterances_data, list):
+                                            for utterance in utterances_data:
+                                                self.utterances.append(UtteranceObject(utterance))
+                                
+                                class UtteranceObject:
+                                    def __init__(self, data):
+                                        self.speaker = data.get('speaker')
+                                        self.text = data.get('text')
+                                
+                                # Créer l'objet transcript
+                                transcript = TranscriptObject(transcript_data)
+                                
+                                # Traiter la transcription terminée
+                                logger.info(f"Transcription {transcript_id} terminée, mise à jour de la base de données")
+                                process_completed_transcript(meeting_id, user_id, transcript)
+                                continue
+                            elif status == 'error':
+                                # Gérer l'erreur
+                                error_message = transcript_data.get('error', 'Unknown error')
+                                logger.error(f"Erreur de transcription pour {meeting_id}: {error_message}")
+                                update_meeting(meeting_id, user_id, {
+                                    "transcript_status": "error",
+                                    "transcript_text": f"Erreur lors de la transcription: {error_message}"
+                                })
+                                continue
+                            else:
+                                # Toujours en cours, ne rien faire
+                                logger.info(f"Transcription {transcript_id} toujours en cours ({status})")
+                                continue
                         else:
-                            # Toujours en cours, ne rien faire
-                            logger.info(f"Transcription {transcript_id} toujours en cours ({transcript.status})")
-                            continue
+                            logger.error(f"Erreur lors de la vérification de la transcription {transcript_id}: {response.status_code} - {response.text}")
                     except Exception as e:
                         logger.error(f"Erreur lors de la vérification de la transcription {transcript_id}: {str(e)}")
-                        # Continuer avec le retraitement normal
+                        # Continuer avec la recherche dans les transcriptions récentes
+                
+                # Si on n'a pas pu extraire l'ID ou vérifier le statut, essayer de trouver la transcription par le nom de fichier
+                if file_name:
+                    logger.info(f"Recherche de transcription pour le fichier: {file_name}")
+                    
+                    for transcript in recent_transcripts:
+                        if transcript.get('status') == 'completed':
+                            # Récupérer les détails complets de la transcription
+                            transcript_id = transcript.get('id')
+                            url = f"https://api.assemblyai.com/v2/transcript/{transcript_id}"
+                            response = requests.get(url, headers=headers)
+                            
+                            if response.status_code == 200:
+                                transcript_data = response.json()
+                                audio_url = transcript_data.get('audio_url', '')
+                                audio_filename = os.path.basename(audio_url) if audio_url else ''
+                                
+                                # Si le nom de fichier correspond
+                                if file_name in audio_filename or audio_filename in file_name:
+                                    logger.info(f"Transcription trouvée pour {file_name}: {transcript_id}")
+                                    
+                                    # Créer un objet compatible avec process_completed_transcript
+                                    class TranscriptObject:
+                                        def __init__(self, data):
+                                            self.id = data.get('id')
+                                            self.status = data.get('status')
+                                            self.text = data.get('text')
+                                            self.audio_duration = data.get('audio_duration')
+                                            self.utterances = []
+                                            
+                                            # Traiter les utterances si disponibles
+                                            utterances_data = data.get('utterances', [])
+                                            if utterances_data and isinstance(utterances_data, list):
+                                                for utterance in utterances_data:
+                                                    self.utterances.append(UtteranceObject(utterance))
+                                    
+                                    class UtteranceObject:
+                                        def __init__(self, data):
+                                            self.speaker = data.get('speaker')
+                                            self.text = data.get('text')
+                                    
+                                    # Créer l'objet transcript
+                                    transcript = TranscriptObject(transcript_data)
+                                    
+                                    # Traiter la transcription terminée
+                                    logger.info(f"Transcription {transcript_id} terminée, mise à jour de la base de données")
+                                    process_completed_transcript(meeting_id, user_id, transcript)
+                                    break
+                    else:
+                        logger.warning(f"Aucune transcription trouvée pour le fichier {file_name}")
             
-            # Si on arrive ici, soit il n'y a pas d'ID de transcription, soit il y a eu une erreur
-            # On relance donc le processus de transcription depuis le début
-            logger.info(f"Lancement/relancement de la transcription pour {meeting_id}")
-            thread = threading.Thread(
-                target=process_transcription,
-                args=(meeting_id, meeting["file_url"], user_id)
-            )
-            thread.daemon = False
-            thread.start()
-            logger.info(f"Transcription lancée pour la réunion {meeting_id}")
+            # Si on arrive ici et que la réunion est toujours en état 'pending' ou 'processing',
+            # on relance le processus de transcription depuis le début
+            meeting = get_meeting(meeting_id, user_id)  # Récupérer l'état actuel
+            if meeting and meeting.get('transcript_status') in ['pending', 'processing']:
+                logger.info(f"Lancement/relancement de la transcription pour {meeting_id}")
+                thread = threading.Thread(
+                    target=process_transcription,
+                    args=(meeting_id, meeting["file_url"], user_id)
+                )
+                thread.daemon = False
+                thread.start()
+                logger.info(f"Transcription lancée pour la réunion {meeting_id}")
         except Exception as e:
             logger.error(f"Erreur lors du traitement de la transcription pour {meeting.get('id', 'unknown')}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
