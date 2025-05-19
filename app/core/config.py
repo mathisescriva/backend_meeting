@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = True
     
+    # Mode d'urgence pour Render
+    EMERGENCY_MODE: bool = os.getenv("EMERGENCY_MODE", "false").lower() == "true"
+    MAX_WORKERS: int = int(os.getenv("MAX_WORKERS", "2"))
+    WORKER_TIMEOUT: int = int(os.getenv("WORKER_TIMEOUT", "60"))
+    
     # Paramètres de sécurité
     JWT_SECRET: str = os.getenv("JWT_SECRET", "super-secret-key-deve-only")
     JWT_ALGORITHM: str = "HS256"
@@ -45,9 +50,17 @@ class Settings(BaseSettings):
     MISTRAL_API_KEY: str = os.getenv("MISTRAL_API_KEY", "")
     
     # Configuration de la base de données
-    DATABASE_URL: str = f"sqlite:///{BASE_DIR}/app.db"
+    # Utiliser PostgreSQL si la variable d'environnement est définie, sinon utiliser SQLite
+    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/app.db")
+    # Format attendu pour PostgreSQL: postgresql://user:password@host:port/dbname
     DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", "10"))
     DB_POOL_TIMEOUT: int = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+    # Paramètres spécifiques à PostgreSQL
+    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "")
+    POSTGRES_SERVER: str = os.getenv("POSTGRES_SERVER", "localhost")
+    POSTGRES_PORT: str = os.getenv("POSTGRES_PORT", "5432")
+    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "meeting_transcriber")
     
     # Timeout pour les requêtes HTTP vers AssemblyAI
     HTTP_TIMEOUT: int = int(os.getenv("HTTP_TIMEOUT", "30"))

@@ -1,6 +1,9 @@
-from ..db.database import get_user_by_email_cached, create_user, get_password_hash
 from loguru import logger
-import sqlite3
+import bcrypt
+import uuid
+from datetime import datetime
+from sqlalchemy.exc import IntegrityError
+from .sqlalchemy_database import User, SessionLocal, get_password_hash
 
 def create_default_users():
     """
@@ -23,31 +26,42 @@ def create_default_users():
         # Ajoutez d'autres utilisateurs par défaut ici
     ]
     
-    for user_data in default_users:
-        try:
-            # Vérifier si l'utilisateur existe déjà
-            existing_user = get_user_by_email_cached(user_data["email"])
-            
-            if not existing_user:
-                # Créer l'utilisateur
-                hashed_password = get_password_hash(user_data["password"])
-                
-                user_dict = {
-                    "email": user_data["email"],
-                    "hashed_password": hashed_password,
-                    "full_name": user_data["full_name"]
-                }
-                
-                try:
-                    new_user = create_user(user_dict)
-                    logger.info(f"Utilisateur par défaut créé: {user_data['email']}")
-                except sqlite3.IntegrityError:
-                    # Un autre worker a probablement créé l'utilisateur entre temps
-                    logger.info(f"L'utilisateur {user_data['email']} a déjà été créé par un autre processus")
-            else:
-                logger.info(f"L'utilisateur {user_data['email']} existe déjà")
-        except Exception as e:
-            # Ne pas faire échouer le démarrage de l'application si la création d'un utilisateur échoue
-            logger.error(f"Erreur lors de la création de l'utilisateur {user_data['email']}: {str(e)}")
+    # Créer une session de base de données
+    db = SessionLocal()
     
-    logger.info("Vérification des utilisateurs par défaut terminée")
+    try:
+        for user_data in default_users:
+            try:
+                # Vérifier si l'utilisateur existe déjà
+                existing_user = db.query(User).filter(User.email == user_data["email"]).first()
+                
+                if not existing_user:
+                    # Créer l'utilisateur
+                    hashed_password = get_password_hash(user_data["password"])
+                    
+                    # Créer un nouvel utilisateur avec SQLAlchemy
+                    new_user = User(
+                        id=str(uuid.uuid4()),
+                        email=user_data["email"],
+                        hashed_password=hashed_password,
+                        full_name=user_data["full_name"],
+                        created_at=datetime.utcnow()
+                    )
+                    
+                    try:
+                        db.add(new_user)
+                        db.commit()
+                        logger.info(f"Utilisateur par défaut créé: {user_data['email']}")
+                    except IntegrityError:
+                        # Un autre worker a probablement créé l'utilisateur entre temps
+                        db.rollback()
+                        logger.info(f"L'utilisateur {user_data['email']} a déjà été créé par un autre processus")
+                else:
+                    logger.info(f"L'utilisateur {user_data['email']} existe déjà")
+            except Exception as e:
+                # Ne pas faire échouer le démarrage de l'application si la création d'un utilisateur échoue
+                logger.error(f"Erreur lors de la création de l'utilisateur {user_data['email']}: {str(e)}")
+        
+        logger.info("Vérification des utilisateurs par défaut terminée")
+    finally:
+        db.close()

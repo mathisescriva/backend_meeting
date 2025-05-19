@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, status, HTTPException
+from fastapi import FastAPI, Request, status, HTTPException, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +10,7 @@ import time
 import logging
 from contextlib import asynccontextmanager
 from .services.queue_processor import start_queue_processor, stop_queue_processor
+from .db.sqlalchemy_database import SessionLocal, init_db as init_sqlalchemy_db
 
 # Configuration du logging
 logging.basicConfig(
@@ -27,23 +28,36 @@ async def lifespan(app: FastAPI):
     # Opérations de démarrage
     logger.info("Démarrage de l'API Meeting Transcriber")
     
+    # Vérifier si nous sommes en mode d'urgence
+    if settings.EMERGENCY_MODE:
+        logger.warning("APPLICATION EN MODE D'URGENCE - Certaines fonctionnalités peuvent être limitées")
+        logger.warning(f"Configuration: MAX_WORKERS={settings.MAX_WORKERS}, WORKER_TIMEOUT={settings.WORKER_TIMEOUT}")
+    
+    # Initialiser la base de données SQLAlchemy
+    logger.info("Initialisation de la base de données SQLAlchemy")
+    init_sqlalchemy_db()
+    
     # Créer les utilisateurs par défaut si nécessaire
     from .db.seed import create_default_users
     logger.info("Création des utilisateurs par défaut si nécessaire")
     create_default_users()
     
-    # Traiter immédiatement les transcriptions en attente au démarrage
-    from .services.assemblyai import process_pending_transcriptions
-    logger.info("Traitement des transcriptions en attente au démarrage")
-    process_pending_transcriptions()
-    
-    # Démarrer le processeur de file d'attente
-    await start_queue_processor()
+    # Traiter les transcriptions en attente uniquement si nous ne sommes pas en mode d'urgence
+    if not settings.EMERGENCY_MODE:
+        from .services.assemblyai import process_pending_transcriptions
+        logger.info("Traitement des transcriptions en attente au démarrage")
+        process_pending_transcriptions()
+        
+        # Démarrer le processeur de file d'attente
+        await start_queue_processor()
+    else:
+        logger.warning("Mode d'urgence: Traitement des transcriptions en attente et processeur de file d'attente DÉSACTIVÉS")
     
     # Générer le schéma OpenAPI
     yield
     # Opérations de fermeture
-    await stop_queue_processor()
+    if not settings.EMERGENCY_MODE:
+        await stop_queue_processor()
     logger.info("Arrêt de l'API Meeting Transcriber")
 
 # Cache pour les réponses des endpoints sans état
@@ -84,6 +98,17 @@ async def add_process_time_header(request: Request, call_next):
         logger.warning(f"Requête lente ({process_time:.2f}s): {request.method} {request.url.path}")
     
     return response
+
+# Middleware pour gérer les sessions SQLAlchemy
+@app.middleware("http")
+async def db_session_middleware(request: Request, call_next):
+    db = SessionLocal()
+    request.state.db = db
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        db.close()
 
 # Gestionnaire d'exception global
 @app.exception_handler(Exception)

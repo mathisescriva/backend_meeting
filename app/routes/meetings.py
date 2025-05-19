@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Path, Query, Request
 from fastapi.logger import logger
+from sqlalchemy.orm import Session
 from ..core.security import get_current_user
 from ..models.user import User
-from ..models.meeting import Meeting, MeetingCreate, MeetingUpdate
+from ..models.meeting import Meeting as MeetingModel, MeetingCreate, MeetingUpdate
 from ..db.firebase import upload_mp3
 from ..services.assemblyai import transcribe_meeting, convert_to_wav, check_transcription_status, process_transcription
 from ..services.mistral_summary import process_meeting_summary
-from ..db.queries import create_meeting, get_meeting, get_meetings_by_user, update_meeting, delete_meeting
+from ..db.sqlalchemy_queries import create_meeting, get_meeting, get_meetings_by_user, update_meeting, delete_meeting
+from ..db.database_utils import get_db
 from datetime import datetime
 from typing import List, Optional
 import os
@@ -21,7 +23,8 @@ router = APIRouter(prefix="/meetings", tags=["Réunions"])
 async def upload_meeting(
     file: UploadFile = File(..., description="Fichier audio à transcrire"),
     title: Optional[str] = None,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Télécharge un fichier audio et crée une nouvelle réunion avec transcription.
@@ -91,31 +94,48 @@ async def upload_meeting(
             with open(temp_output, "rb") as src, open(final_path, "wb") as dst:
                 dst.write(src.read())
             
-            # Créer l'entrée dans la base de données avec le statut "processing" dès le début
+            # Créer l'entrée dans la base de données avec le statut approprié
             file_url = f"/{final_path}"
-            meeting_data = {
-                "title": title,
-                "file_url": file_url,
-                "transcript_status": "processing"  
-            }
-            meeting = create_meeting(meeting_data, current_user["id"])
             
-            # Lancer la transcription de manière asynchrone avec logs détaillés
-            logger.info(f"Lancement de la transcription pour la réunion {meeting['id']}")
-            try:
-                # Créer un thread et exécuter immédiatement la transcription avec le service unifié
-                transcription_thread = threading.Thread(
-                    target=process_transcription,
-                    args=(meeting["id"], file_url, current_user["id"])
-                )
-                transcription_thread.daemon = False  # Permet au thread de continuer même si le serveur s'arrête
-                transcription_thread.start()
+            # Vérifier si nous sommes en mode d'urgence
+            from ..core.config import settings
+            
+            if settings.EMERGENCY_MODE:
+                # En mode d'urgence, nous ne lancçons pas la transcription automatiquement
+                # pour éviter les timeouts des workers
+                meeting_data = {
+                    "title": title,
+                    "file_url": file_url,
+                    "transcript_status": "pending",
+                    "transcript_text": "Fichier audio enregistré. La transcription sera lancée ultérieurement."
+                }
+                meeting = create_meeting(db, meeting_data, current_user["id"])
+                logger.warning(f"MODE D'URGENCE: Fichier audio enregistré sans transcription automatique pour {meeting['id']}")
+            else:
+                # Mode normal - lancer la transcription automatiquement
+                meeting_data = {
+                    "title": title,
+                    "file_url": file_url,
+                    "transcript_status": "processing"  
+                }
+                meeting = create_meeting(db, meeting_data, current_user["id"])
                 
-                logger.info(f"Transcription lancée directement pour la réunion {meeting['id']}")
-            except Exception as e:
-                logger.error(f"Erreur lors du lancement de la transcription: {str(e)}")
-                logger.error(traceback.format_exc())
-                # Ne pas faire échouer la requête, juste logger l'erreur
+                # Lancer la transcription de manière asynchrone avec logs détaillés
+                logger.info(f"Lancement de la transcription pour la réunion {meeting['id']}")
+                try:
+                    # Créer un thread et exécuter immédiatement la transcription avec le service unifié
+                    transcription_thread = threading.Thread(
+                        target=process_transcription,
+                        args=(meeting["id"], file_url, current_user["id"])
+                    )
+                    transcription_thread.daemon = False  # Permet au thread de continuer même si le serveur s'arrête
+                    transcription_thread.start()
+                    
+                    logger.info(f"Transcription lancée directement pour la réunion {meeting['id']}")
+                except Exception as e:
+                    logger.error(f"Erreur lors du lancement de la transcription: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    # Ne pas faire échouer la requête, juste logger l'erreur
             
             return meeting
             
@@ -128,9 +148,10 @@ async def upload_meeting(
             )
 
 @router.get("/", response_model=List[dict])
-async def list_meetings(
+def list_meetings(
     status: Optional[str] = Query(None, description="Filtrer par statut de transcription (pending, processing, completed, error)"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Liste toutes les réunions de l'utilisateur connecté.
@@ -139,7 +160,8 @@ async def list_meetings(
     
     Retourne une liste de réunions avec leurs métadonnées (sans le contenu complet des transcriptions).
     """
-    meetings = get_meetings_by_user(current_user["id"])
+    # Récupérer les réunions de l'utilisateur
+    meetings = get_meetings_by_user(db, current_user["id"], status)
     
     # Filtrer par statut si spécifié
     if status:
@@ -150,7 +172,8 @@ async def list_meetings(
 @router.get("/{meeting_id}", response_model=dict)
 async def get_meeting_route(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Récupère les détails d'une réunion spécifique, y compris sa transcription.
@@ -163,7 +186,7 @@ async def get_meeting_route(
     # Log pour le debugging
     logger.info(f"Attempting to get meeting with ID: {meeting_id} for user: {current_user['id']}")
     
-    meeting = get_meeting(meeting_id, current_user["id"])
+    meeting = get_meeting(db, meeting_id, current_user["id"])
     
     if not meeting:
         logger.warning(f"Meeting not found - ID: {meeting_id}, User ID: {current_user['id']}")
@@ -187,7 +210,8 @@ async def get_meeting_route(
 async def update_meeting_route(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
     meeting_update: MeetingUpdate = ...,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Met à jour les métadonnées d'une réunion.
@@ -203,29 +227,27 @@ async def update_meeting_route(
     if not update_data:
         raise HTTPException(status_code=400, detail="Aucune donnée à mettre à jour")
     
-    # Mettre à jour les données
-    updated_meeting = update_meeting(meeting_id, current_user["id"], update_data)
+    # Mettre à jour la réunion
+    updated_meeting = update_meeting(db, meeting_id, current_user["id"], update_data)
     
     if not updated_meeting:
         raise HTTPException(status_code=404, detail="Réunion non trouvée")
         
     return updated_meeting
 
-@router.post("/{meeting_id}/generate-summary", response_model=dict)
+@router.post("/{meeting_id}/summary", response_model=dict)
 async def generate_meeting_summary_route(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Génère un compte rendu de réunion en utilisant l'API Mistral.
     
     - **meeting_id**: Identifiant unique de la réunion
-    
-    Cette route déclenche la génération d'un compte rendu de réunion à partir
-    de la transcription existante. La génération s'effectue de manière asynchrone.
     """
     # Vérifier que la réunion existe
-    meeting = get_meeting(meeting_id, current_user["id"])
+    meeting = get_meeting(db, meeting_id, current_user["id"])
     
     if not meeting:
         raise HTTPException(
@@ -253,17 +275,17 @@ async def generate_meeting_summary_route(
     # Démarrer la génération du compte rendu
     try:
         # Mettre à jour le statut pour indiquer que la génération est en cours
-        update_meeting(meeting_id, current_user["id"], {"summary_status": "processing"})
+        update_meeting(db, meeting_id, current_user["id"], {"summary_status": "processing"})
         
         # Lancer le processus de génération du compte rendu
         process_meeting_summary(meeting_id, current_user["id"])
         
-        # Récupérer la réunion mise à jour
-        updated_meeting = get_meeting(meeting_id, current_user["id"])
+        # Récupérer la réunion avant de la supprimer
+        meeting = get_meeting(db, meeting_id, current_user["id"])
         
         return {
             "message": "Génération du compte rendu en cours",
-            "meeting": updated_meeting
+            "meeting": meeting
         }
     except Exception as e:
         logger.error(f"Erreur lors du démarrage de la génération du compte rendu: {str(e)}")
@@ -279,7 +301,8 @@ async def generate_meeting_summary_route(
 @router.get("/{meeting_id}/summary", response_model=dict)
 async def get_meeting_summary(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Récupère le compte rendu d'une réunion spécifique.
@@ -289,7 +312,7 @@ async def get_meeting_summary(
     Retourne le compte rendu de la réunion et son statut.
     """
     # Vérifier que la réunion existe
-    meeting = get_meeting(meeting_id, current_user["id"])
+    meeting = get_meeting(db, meeting_id, current_user["id"])
     
     if not meeting:
         raise HTTPException(
@@ -315,7 +338,8 @@ async def get_meeting_summary(
 @router.delete("/{meeting_id}", response_model=dict)
 async def delete_meeting_route(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Supprime une réunion et ses données associées.
@@ -325,15 +349,16 @@ async def delete_meeting_route(
     Cette opération supprime à la fois les métadonnées de la réunion dans la base
     de données et le fichier audio associé s'il est stocké localement.
     """
-    # Supprimer la réunion et récupérer l'URL du fichier
-    file_url = delete_meeting(meeting_id, current_user["id"])
+    # Supprimer la réunion de la base de données
+    success = delete_meeting(db, meeting_id, current_user["id"])
     
-    if not file_url:
+    if not success:
         raise HTTPException(status_code=404, detail="Réunion non trouvée")
     
     try:
         # Si le fichier est stocké localement, supprimer le fichier
-        if file_url.startswith("/uploads/"):
+        file_url = get_meeting(db, meeting_id, current_user["id"]).get("file_url")
+        if file_url and file_url.startswith("/uploads/"):
             file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), file_url[1:])
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -346,7 +371,8 @@ async def delete_meeting_route(
 @router.post("/{meeting_id}/transcribe", response_model=dict)
 async def transcribe_meeting_route(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Relance la transcription d'une réunion.
@@ -360,7 +386,7 @@ async def transcribe_meeting_route(
     selon la durée de l'audio.
     """
     # Vérifier que la réunion existe et appartient à l'utilisateur
-    meeting = get_meeting(meeting_id, current_user["id"])
+    meeting = get_meeting(db, meeting_id, current_user["id"])
     
     if not meeting:
         raise HTTPException(status_code=404, detail="Réunion non trouvée")
@@ -385,7 +411,7 @@ async def transcribe_meeting_route(
                     "duration_seconds": duration,
                     "speakers_count": speakers_count
                 }
-                updated_meeting = update_meeting(meeting_id, current_user["id"], update_data)
+                updated_meeting = update_meeting(db, meeting_id, current_user["id"], update_data)
                 return updated_meeting
         except Exception as e:
             logger.error(f"Erreur lors de la vérification du statut: {str(e)}")
@@ -400,21 +426,23 @@ async def transcribe_meeting_route(
             detail="URL du fichier manquante"
         )
     
-    # Mettre à jour le statut
-    update_meeting(meeting_id, current_user["id"], {"transcript_status": "processing"})
-    
+    # Mettre à jour le statut du résumé
+    update_meeting(db, meeting_id, current_user["id"], {
+        "summary_status": "processing"
+    })
     # Lancer la transcription en arrière-plan
     transcribe_meeting(meeting_id, file_url, current_user["id"])
     
     # Obtenir la réunion mise à jour
-    updated_meeting = get_meeting(meeting_id, current_user["id"])
+    updated_meeting = get_meeting(db, meeting_id, current_user["id"])
     
     return updated_meeting
 
 @router.get("/{meeting_id}/transcript", response_model=dict)
 async def get_transcript(
     meeting_id: str = Path(..., description="ID unique de la réunion"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Récupère uniquement la transcription d'une réunion.
@@ -441,7 +469,8 @@ async def get_transcript(
 @router.post("/validate-ids", response_model=dict)
 async def validate_meeting_ids(
     meeting_ids: List[str],
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Valide une liste d'identifiants de réunions et retourne les IDs qui existent encore.

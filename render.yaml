@@ -13,3 +13,42 @@ services:
         generateValue: true
       - key: ENVIRONMENT
         value: production
+      - key: EMERGENCY_MODE
+        value: "true"
+      - key: MAX_WORKERS
+        value: "1"
+      - key: WORKER_TIMEOUT
+        value: "300"
+      # Configuration PostgreSQL
+      - key: DATABASE_URL
+        fromDatabase:
+          name: meeting-transcriber-db
+          property: connectionString
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: meeting-transcriber-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: meeting-transcriber-db
+          property: password
+      - key: POSTGRES_SERVER
+        fromDatabase:
+          name: meeting-transcriber-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: meeting-transcriber-db
+          property: port
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: meeting-transcriber-db
+          property: database
+    dependsOn:
+      - meeting-transcriber-db
+
+databases:
+  - name: meeting-transcriber-db
+    databaseName: meeting_transcriber
+    plan: starter
+    postgresMajorVersion: 15
