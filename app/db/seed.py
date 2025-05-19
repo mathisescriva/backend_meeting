@@ -41,7 +41,6 @@ def create_default_users():
                     
                     # Créer un nouvel utilisateur avec SQLAlchemy
                     new_user = User(
-                        id=str(uuid.uuid4()),
                         email=user_data["email"],
                         hashed_password=hashed_password,
                         full_name=user_data["full_name"],

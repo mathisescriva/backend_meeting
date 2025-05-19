@@ -1,69 +1,63 @@
-from sqlalchemy import create_engine, Column, String, Text, Integer, ForeignKey, DateTime, func
+from sqlalchemy import create_engine, Column, String, Text, Integer, ForeignKey, DateTime, func, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from datetime import datetime
 import uuid
-import bcrypt
-import threading
 import os
-from pathlib import Path
-from app.core.config import settings, BASE_DIR
+import logging
+from ..core.config import settings
+
+# Configuration du logging
+logger = logging.getLogger("sqlalchemy_database")
 
 # Créer la base pour les modèles SQLAlchemy
 Base = declarative_base()
 
-# Créer le moteur SQLAlchemy avec les paramètres de connexion
-try:
-    if settings.DATABASE_URL.startswith('sqlite'):
-        # Configuration spécifique pour SQLite
-        engine = create_engine(
-            settings.DATABASE_URL,
-            connect_args={"check_same_thread": False},
-            pool_size=settings.DB_POOL_SIZE,
-            pool_timeout=settings.DB_POOL_TIMEOUT,
-            pool_pre_ping=True
-        )
-    else:
-        # Configuration pour PostgreSQL
-        try:
-            # Vérifier si psycopg2 est disponible
-            import psycopg2
+# Créer l'engine SQLAlchemy
+def get_engine():
+    try:
+        # Utiliser PostgreSQL si disponible
+        if settings.DATABASE_URL.startswith('postgresql'):
+            logger.info(f"Initialisation de l'engine PostgreSQL avec {settings.DATABASE_URL}")
             engine = create_engine(
                 settings.DATABASE_URL,
                 pool_size=settings.DB_POOL_SIZE,
                 pool_timeout=settings.DB_POOL_TIMEOUT,
+                pool_recycle=3600,
                 pool_pre_ping=True
             )
-        except ImportError:
-            # Si psycopg2 n'est pas disponible, utiliser SQLite comme solution de repli
-            print("AVERTISSEMENT: psycopg2 n'est pas disponible, utilisation de SQLite comme solution de repli")
+            logger.info("Engine PostgreSQL initialisé avec succès")
+            return engine
+        else:
+            # Fallback sur SQLite
+            logger.info(f"Initialisation de l'engine SQLite avec {settings.DATABASE_URL}")
             engine = create_engine(
-                f"sqlite:///{BASE_DIR}/app.db",
-                connect_args={"check_same_thread": False},
-                pool_size=settings.DB_POOL_SIZE,
-                pool_timeout=settings.DB_POOL_TIMEOUT,
-                pool_pre_ping=True
+                settings.DATABASE_URL,
+                connect_args={"check_same_thread": False}
             )
-except Exception as e:
-    print(f"Erreur lors de la création du moteur SQLAlchemy: {e}")
-    # Utiliser SQLite comme solution de repli en cas d'erreur
-    engine = create_engine(
-        f"sqlite:///{BASE_DIR}/app.db",
-        connect_args={"check_same_thread": False},
-        pool_size=settings.DB_POOL_SIZE,
-        pool_timeout=settings.DB_POOL_TIMEOUT,
-        pool_pre_ping=True
-    )
+            logger.info("Engine SQLite initialisé avec succès")
+            return engine
+    except Exception as e:
+        logger.error(f"Erreur lors de l'initialisation de l'engine SQLAlchemy: {str(e)}")
+        # Fallback sur SQLite en cas d'erreur
+        sqlite_url = f"sqlite:///{settings.BASE_DIR}/app.db"
+        logger.info(f"Fallback sur SQLite: {sqlite_url}")
+        return create_engine(sqlite_url, connect_args={"check_same_thread": False})
 
-# Créer une session locale pour chaque thread
-session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-SessionLocal = scoped_session(session_factory)
+# Créer l'engine
+engine = get_engine()
+
+# Créer la factory de session
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Créer la session scopée pour les threads
+db_session = scoped_session(SessionLocal)
 
 # Modèle pour la table users
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String, nullable=True)
@@ -77,16 +71,15 @@ class Meeting(Base):
     __tablename__ = "meetings"
 
     id = Column(String, primary_key=True, index=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     title = Column(String, nullable=False)
-    file_url = Column(String, nullable=False)
-    transcript_text = Column(Text, nullable=True)
+    file_url = Column(String, nullable=True)
     transcript_status = Column(String, default="pending")
+    transcript_content = Column(Text, nullable=True)
+    transcript_summary = Column(Text, nullable=True)
+    transcript_key_points = Column(Text, nullable=True)
+    transcript_action_items = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    duration_seconds = Column(Integer, nullable=True)
-    speakers_count = Column(Integer, nullable=True)
-    summary_text = Column(Text, nullable=True)
-    summary_status = Column(String, nullable=True)
     
     # Relation avec l'utilisateur
     user = relationship("User", back_populates="meetings")
@@ -100,16 +93,18 @@ def get_db():
     finally:
         db.close()
 
-def get_password_hash(password: str) -> str:
+def get_password_hash(password: str):
     """Hash a password using bcrypt"""
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(password.encode(), salt).decode()
+    import bcrypt
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 def init_db():
     """Initialiser la base de données avec les tables nécessaires"""
-    # Créer toutes les tables définies dans les modèles
-    Base.metadata.create_all(bind=engine)
-    print("Database initialized successfully with SQLAlchemy")
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("Database initialized successfully with SQLAlchemy")
+    except Exception as e:
+        print(f"Error initializing database: {str(e)}")
 
 # Initialiser la base de données au démarrage
 init_db()
