@@ -7,6 +7,9 @@ from fastapi.security import OAuth2PasswordBearer
 from ..core.config import settings
 from ..db.database import get_user_by_email, get_user_by_id
 import functools
+import psycopg2
+import psycopg2.extras
+import os
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
@@ -16,6 +19,10 @@ password_verify_cache = {}
 # Fonctions de vérification mot de passe
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash using bcrypt with cache optimization"""
+    # Log pour débogage
+    print(f"Vérification du mot de passe: {plain_password[:2]}*** (longueur: {len(plain_password)})")
+    print(f"Hash stocké: {hashed_password[:10]}... (longueur: {len(hashed_password)})")
+    
     # Clé de cache (combinaison du mot de passe en clair et du hash)
     cache_key = f"{plain_password}:{hashed_password}"
     current_time = datetime.utcnow()
@@ -25,16 +32,20 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         timestamp, result = password_verify_cache[cache_key]
         # Valide pour 5 minutes
         if (current_time - timestamp).total_seconds() < 300:
+            print(f"Résultat du cache: {result}")
             return result
     
     # Si pas dans le cache ou expiré, vérifier avec bcrypt
     try:
+        print(f"Vérification avec bcrypt...")
         result = bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+        print(f"Résultat de la vérification bcrypt: {result}")
         # Stocker dans le cache
         password_verify_cache[cache_key] = (current_time, result)
         return result
-    except Exception:
+    except Exception as e:
         # En cas d'erreur, retourner False par sécurité
+        print(f"Erreur lors de la vérification du mot de passe: {str(e)}")
         return False
     
 # Purge périodique du cache (cache limité à 100 entrées)
@@ -57,6 +68,11 @@ def purge_password_cache():
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Créer un token JWT pour l'authentification"""
     to_encode = data.copy()
+    
+    # S'assurer que le sujet (sub) est une chaîne de caractères
+    if "sub" in to_encode and not isinstance(to_encode["sub"], str):
+        to_encode["sub"] = str(to_encode["sub"])
+        print(f"ID utilisateur converti en chaîne pour le token JWT: {to_encode['sub']}")
     
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -92,28 +108,56 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             raise credentials_exception
         
         print(f"ID utilisateur extrait du token: {user_id}, Type: {type(user_id)}")
-            
-        # Récupération de l'utilisateur
-        # En mode production (PostgreSQL), l'ID peut être un entier
-        if settings.ENVIRONMENT == 'production':
-            try:
-                # Essayer de convertir en entier si c'est une chaîne
-                if isinstance(user_id, str) and user_id.isdigit():
-                    user_id = int(user_id)
-                    print(f"ID utilisateur converti en entier: {user_id}")
-                elif not isinstance(user_id, int):
-                    print(f"ID utilisateur n'est ni un entier ni une chaîne numérique: {user_id}")
-            except Exception as e:
-                print(f"Erreur lors de la conversion de l'ID utilisateur: {str(e)}")
         
-        print(f"Recherche de l'utilisateur avec ID: {user_id}, Type: {type(user_id)}")
-        user = get_user_by_id(user_id)
+        # Connexion directe à la base de données PostgreSQL pour récupérer l'utilisateur
+        conn = None
+        user = None
+        
+        try:
+            # Connexion directe à la base de données PostgreSQL avec valeurs codées en dur
+            conn = psycopg2.connect(
+                dbname='meeting_transcriber',
+                user='meeting_transcriber_user',
+                password='rlpb7cswwmJ5egbYXW3U1FF78g9kN308',
+                host='dpg-d0lfghogjchc73f1mvjg-a.oregon-postgres.render.com',
+                port='5432'
+            )
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Requête SQL pour récupérer l'utilisateur
+            print(f"Exécution de la requête SQL: SELECT id, email, hashed_password, full_name, created_at FROM users WHERE id = {user_id}")
+            
+            cursor.execute("""
+            SELECT id, email, hashed_password, full_name, created_at
+            FROM users
+            WHERE id = %s
+            """, (user_id,))
+            
+            user_row = cursor.fetchone()
+            if user_row:
+                user = dict(user_row)
+                print(f"Utilisateur trouvé: {user.get('email')}, ID: {user.get('id')}, Type ID: {type(user.get('id'))}")
+            else:
+                print(f"Aucun utilisateur trouvé avec ID: {user_id}")
+        except Exception as e:
+            print(f"Erreur lors de la récupération de l'utilisateur: {str(e)}")
+            raise credentials_exception
+        finally:
+            if conn:
+                conn.close()
         
         if user is None:
             print(f"Utilisateur avec ID {user_id} non trouvé")
             raise credentials_exception
         
         print(f"Utilisateur trouvé: {user.get('email') if isinstance(user, dict) else 'Non dictionnaire'}")
+        
+        # Convertir l'objet datetime en chaîne de caractères ISO 8601 pour le champ created_at
+        if isinstance(user, dict) and 'created_at' in user and user['created_at'] is not None:
+            if not isinstance(user['created_at'], str):
+                user['created_at'] = user['created_at'].isoformat()
+                print(f"Conversion de created_at en ISO 8601: {user['created_at']}")
+        
         return user
         
     except JWTError:

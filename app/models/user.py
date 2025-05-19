@@ -9,7 +9,7 @@ class UserCreate(UserBase):
     password: str
 
 class User(UserBase):
-    id: str
+    id: int  # Changer str en int pour PostgreSQL
     created_at: Optional[str] = None
 
     class Config:

@@ -85,8 +85,21 @@ def get_user_by_email(email):
     """Récupérer un utilisateur par son email depuis PostgreSQL"""
     conn = None
     try:
-        conn = get_db_connection()
+        # Log pour débogage
+        logger.info(f"Recherche de l'utilisateur avec email: {email}")
+        
+        # Connexion directe à la base de données PostgreSQL
+        conn = psycopg2.connect(
+            dbname=os.environ.get('POSTGRES_DB'),
+            user=os.environ.get('POSTGRES_USER'),
+            password=os.environ.get('POSTGRES_PASSWORD'),
+            host=os.environ.get('POSTGRES_SERVER'),
+            port=os.environ.get('POSTGRES_PORT')
+        )
         cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        # Log de la requête SQL
+        logger.info(f"Exécution de la requête SQL: SELECT id, email, hashed_password, full_name, created_at FROM users WHERE email = '{email}'")
         
         cursor.execute("""
         SELECT id, email, hashed_password, full_name, created_at
@@ -97,7 +110,11 @@ def get_user_by_email(email):
         user = cursor.fetchone()
         if user:
             # Convertir en dictionnaire
-            return dict(user)
+            user_dict = dict(user)
+            logger.info(f"Utilisateur trouvé avec email {email}: ID={user_dict.get('id')}, Type ID={type(user_dict.get('id'))}")
+            return user_dict
+        
+        logger.info(f"Aucun utilisateur trouvé avec email: {email}")
         return None
     except Exception as e:
         logger.error(f"Erreur lors de la récupération de l'utilisateur par email: {str(e)}")

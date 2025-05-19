@@ -146,21 +146,71 @@ async def login_json(login_data: LoginRequest):
     ```
     """
     try:
-        # Recherche de l'utilisateur par email
-        user = get_user_by_email_cached(login_data.email)
+        # Log pour débogage
+        print(f"Tentative de connexion pour l'email: {login_data.email}")
+        
+        # Connexion directe à la base de données PostgreSQL pour récupérer l'utilisateur
+        import psycopg2
+        import psycopg2.extras
+        import os
+        
+        conn = None
+        user = None
+        
+        try:
+            # Connexion directe à la base de données PostgreSQL avec valeurs codées en dur
+            conn = psycopg2.connect(
+                dbname='meeting_transcriber',
+                user='meeting_transcriber_user',
+                password='rlpb7cswwmJ5egbYXW3U1FF78g9kN308',
+                host='dpg-d0lfghogjchc73f1mvjg-a.oregon-postgres.render.com',
+                port='5432'
+            )
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Requête SQL pour récupérer l'utilisateur
+            print(f"Exécution de la requête SQL: SELECT id, email, hashed_password, full_name, created_at FROM users WHERE email = '{login_data.email}'")
+            
+            cursor.execute("""
+            SELECT id, email, hashed_password, full_name, created_at
+            FROM users
+            WHERE email = %s
+            """, (login_data.email,))
+            
+            user_row = cursor.fetchone()
+            if user_row:
+                user = dict(user_row)
+                print(f"Utilisateur trouvé: {user.get('email')}, ID: {user.get('id')}, Type ID: {type(user.get('id'))}")
+            else:
+                print(f"Aucun utilisateur trouvé avec email: {login_data.email}")
+        except Exception as e:
+            print(f"Erreur lors de la récupération de l'utilisateur: {str(e)}")
+        finally:
+            if conn:
+                conn.close()
+        
         if not user:
+            print(f"Utilisateur non trouvé pour l'email: {login_data.email}")
             raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
             
         # Vérification du mot de passe
-        if not verify_password(login_data.password, user["hashed_password"]):
+        password_valid = verify_password(login_data.password, user["hashed_password"])
+        print(f"Résultat de la vérification du mot de passe: {password_valid}")
+        
+        if not password_valid:
+            print(f"Mot de passe incorrect pour l'utilisateur: {login_data.email}")
             raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
             
         # Création du token JWT
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        print(f"Création du token JWT avec ID utilisateur: {user['id']}, Type: {type(user['id'])}")
+        
         access_token = create_access_token(
             data={"sub": user["id"]},  # Utiliser l'ID comme sujet du token
             expires_delta=access_token_expires
         )
+        
+        print(f"Token JWT créé avec succès: {access_token[:10]}...")
         
         # Purger les caches périodiquement pour éviter les fuites mémoire
         purge_old_entries_from_cache()

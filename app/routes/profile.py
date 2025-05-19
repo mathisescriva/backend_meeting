@@ -58,7 +58,8 @@ async def update_profile(
     }
     ```
     """
-    user_id = current_user["id"]
+    # S'assurer que l'ID utilisateur est un entier pour PostgreSQL
+    user_id = int(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
     update_fields = {}
     
     # Ne mettre à jour que les champs qui sont fournis

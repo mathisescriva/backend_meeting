@@ -230,24 +230,56 @@ def update_user(user_id, update_data):
     """Mettre à jour les informations d'un utilisateur"""
     conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        # Connexion directe à PostgreSQL pour le test
+        import psycopg2
+        import psycopg2.extras
+        import os
+        from dotenv import load_dotenv
+        
+        # Charger les variables d'environnement
+        load_dotenv()
+        
+        # Paramètres de connexion PostgreSQL
+        db_params = {
+            'dbname': os.getenv('POSTGRES_DB', 'postgres'),
+            'user': os.getenv('POSTGRES_USER', 'postgres'),
+            'password': os.getenv('POSTGRES_PASSWORD', 'postgres'),
+            'host': os.getenv('POSTGRES_SERVER', 'localhost'),
+            'port': os.getenv('POSTGRES_PORT', '5432')
+        }
+        
+        # Établir la connexion à PostgreSQL
+        conn = psycopg2.connect(**db_params)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         
         # Construire la requête de mise à jour dynamiquement
-        placeholders = ", ".join([f"{k} = ?" for k in update_data.keys()])
+        placeholders = ", ".join([f"{k} = %s" for k in update_data.keys()])
         values = list(update_data.values())
         
-        query = f"UPDATE users SET {placeholders} WHERE id = ?"
+        print(f"Exécution de la requête SQL: UPDATE users SET {placeholders} WHERE id = {user_id}")
+        print(f"Valeurs: {values}")
+        print(f"Type de l'ID utilisateur: {type(user_id)}")
+        
+        # Ajouter un cast explicite à l'ID utilisateur pour PostgreSQL
+        query = f"UPDATE users SET {placeholders} WHERE id = %s::integer"
         cursor.execute(query, (*values, user_id))
         conn.commit()
         
-        # Vider le cache pour cet utilisateur
-        cache_key = f"user_id_{user_id}"
-        if cache_key in user_cache:
-            del user_cache[cache_key]
+        # Vider le cache pour cet utilisateur si nécessaire
+        if 'user_cache' in globals() and f"user_id_{user_id}" in user_cache:
+            del user_cache[f"user_id_{user_id}"]
         
         # Récupérer l'utilisateur mis à jour
-        return get_user_by_id(user_id)
+        cursor.execute("""
+            SELECT id, email, hashed_password, full_name, created_at
+            FROM users
+            WHERE id = %s
+        """, (user_id,))
+        
+        user = cursor.fetchone()
+        if user:
+            return dict(user)
+        return None
     except Exception as e:
         print(f"Erreur lors de la mise à jour de l'utilisateur: {e}")
         if conn:
