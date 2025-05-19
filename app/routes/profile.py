@@ -68,9 +68,7 @@ async def update_profile(
     if user_data.email is not None:
         update_fields["email"] = user_data.email
     
-    # Si l'URL de la photo de profil est fournie, la mettre à jour
-    if user_data.profile_picture_url is not None:
-        update_fields["profile_picture_url"] = user_data.profile_picture_url
+    # Note: La fonctionnalité de photo de profil a été désactivée
     
     # Si aucun champ n'est fourni, ne rien faire
     if not update_fields:
@@ -102,15 +100,11 @@ async def upload_profile_picture(
     user_id = current_user["id"]
     
     try:
-        # Supprimer l'ancienne photo si elle existe
-        if current_user.get("profile_picture_url"):
-            delete_profile_picture(current_user["profile_picture_url"])
+        # Fonctionnalité temporairement désactivée
+        logger.info("Tentative d'upload de photo de profil - fonctionnalité désactivée")
         
-        # Sauvegarder la nouvelle photo
-        profile_picture_url = await save_profile_picture(file, user_id)
-        
-        # Mettre à jour l'utilisateur
-        updated_user = update_user(user_id, {"profile_picture_url": profile_picture_url})
+        # Retourner l'utilisateur sans modification
+        updated_user = current_user
         
         if not updated_user:
             raise HTTPException(
