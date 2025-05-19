@@ -14,7 +14,8 @@ if settings.ENVIRONMENT == 'production':
         get_user_by_email, get_user_by_id, create_user, 
         get_user_by_email_cached, get_user_by_id_cached,
         clear_user_cache, purge_old_entries_from_cache,
-        get_password_hash
+        get_password_hash, get_db_connection, release_db_connection,
+        reset_db_pool
     )
 
 # Chemin de la base de données SQLite (utilisé uniquement en développement)

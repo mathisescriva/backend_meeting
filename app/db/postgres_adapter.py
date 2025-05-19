@@ -25,6 +25,21 @@ def get_db_connection():
     except Exception as e:
         logger.error(f"Erreur lors de la connexion à PostgreSQL: {str(e)}")
         raise
+        
+def release_db_connection(conn):
+    """Libérer une connexion PostgreSQL"""
+    if conn:
+        try:
+            conn.close()
+            logger.info("Connexion PostgreSQL fermée")
+        except Exception as e:
+            logger.error(f"Erreur lors de la fermeture de la connexion PostgreSQL: {str(e)}")
+            
+def reset_db_pool():
+    """Fonction de compatibilité avec le reste du code"""
+    # PostgreSQL n'utilise pas de pool de connexions dans cette implémentation
+    # mais nous gardons cette fonction pour la compatibilité
+    return True
 
 def get_password_hash(password: str) -> str:
     """Hash a password using bcrypt"""
