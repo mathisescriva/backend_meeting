@@ -17,6 +17,8 @@ if settings.ENVIRONMENT == 'production':
         get_password_hash, get_db_connection, release_db_connection,
         reset_db_pool
     )
+    # Importer les fonctions PostgreSQL adaptu00e9es pour les requêtes
+    from .postgres_queries import get_pending_transcriptions, get_meetings_by_status
 
 # Chemin de la base de données SQLite (utilisé uniquement en développement)
 DB_PATH = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
