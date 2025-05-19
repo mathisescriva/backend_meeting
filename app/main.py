@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, status, HTTPException, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from .routes import auth, meetings, profile, simple_meetings
+from .routes import auth, meetings, profile, simple_meetings, direct_upload, sqlalchemy_upload, simple_upload, psycopg2_upload, postgres_upload, direct_postgres_upload, test_upload, working_upload, direct_sql_upload, fixed_upload, literal_upload, raw_upload, ensure_upload, direct_assemblyai, assemblyai_direct, sqlite_assemblyai
 from .core.config import settings
 from .core.security import get_current_user
 from fastapi.openapi.utils import get_openapi
@@ -156,6 +156,22 @@ async def health_check():
 app.include_router(auth.router, prefix="")
 app.include_router(meetings.router, prefix="")
 app.include_router(profile.router, prefix="")
+app.include_router(direct_upload.router, prefix="")
+app.include_router(sqlalchemy_upload.router, prefix="")
+app.include_router(simple_upload.router, prefix="")
+app.include_router(psycopg2_upload.router, prefix="")
+app.include_router(postgres_upload.router, prefix="")
+app.include_router(direct_postgres_upload.router, prefix="")
+app.include_router(test_upload.router, prefix="")
+app.include_router(working_upload.router, prefix="")
+app.include_router(direct_sql_upload.router, prefix="")
+app.include_router(fixed_upload.router, prefix="")
+app.include_router(literal_upload.router, prefix="")
+app.include_router(raw_upload.router, prefix="")
+app.include_router(ensure_upload.router, prefix="")
+app.include_router(direct_assemblyai.router, prefix="")
+app.include_router(assemblyai_direct.router, prefix="")
+app.include_router(sqlite_assemblyai.router, prefix="")
 app.include_router(simple_meetings.router, prefix="")
 
 # Montage des répertoires de fichiers statiques
