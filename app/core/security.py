@@ -75,14 +75,23 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
+        # Log du token pour débogage
+        print(f"Token reçu: {token[:10]}...")
+        
         # Décodage du token
-        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        try:
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+            print(f"Token décodé avec succès. Payload: {payload}")
+        except Exception as e:
+            print(f"Erreur lors du décodage du token: {str(e)}")
+            raise credentials_exception
+            
         user_id = payload.get("sub")
         if user_id is None:
+            print("Aucun ID utilisateur (sub) dans le token")
             raise credentials_exception
         
-        # Log pour débogage
-        print(f"Token décodé avec succès. ID utilisateur: {user_id}, Type: {type(user_id)}")
+        print(f"ID utilisateur extrait du token: {user_id}, Type: {type(user_id)}")
             
         # Récupération de l'utilisateur
         # En mode production (PostgreSQL), l'ID peut être un entier
@@ -91,14 +100,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
                 # Essayer de convertir en entier si c'est une chaîne
                 if isinstance(user_id, str) and user_id.isdigit():
                     user_id = int(user_id)
+                    print(f"ID utilisateur converti en entier: {user_id}")
+                elif not isinstance(user_id, int):
+                    print(f"ID utilisateur n'est ni un entier ni une chaîne numérique: {user_id}")
             except Exception as e:
                 print(f"Erreur lors de la conversion de l'ID utilisateur: {str(e)}")
-                
+        
+        print(f"Recherche de l'utilisateur avec ID: {user_id}, Type: {type(user_id)}")
         user = get_user_by_id(user_id)
+        
         if user is None:
             print(f"Utilisateur avec ID {user_id} non trouvé")
             raise credentials_exception
-            
+        
+        print(f"Utilisateur trouvé: {user.get('email') if isinstance(user, dict) else 'Non dictionnaire'}")
         return user
         
     except JWTError:
