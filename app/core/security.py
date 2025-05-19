@@ -77,13 +77,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         # Décodage du token
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-        user_id: str = payload.get("sub")
+        user_id = payload.get("sub")
         if user_id is None:
             raise credentials_exception
+        
+        # Log pour débogage
+        print(f"Token décodé avec succès. ID utilisateur: {user_id}, Type: {type(user_id)}")
             
         # Récupération de l'utilisateur
+        # En mode production (PostgreSQL), l'ID peut être un entier
+        if settings.ENVIRONMENT == 'production':
+            try:
+                # Essayer de convertir en entier si c'est une chaîne
+                if isinstance(user_id, str) and user_id.isdigit():
+                    user_id = int(user_id)
+            except Exception as e:
+                print(f"Erreur lors de la conversion de l'ID utilisateur: {str(e)}")
+                
         user = get_user_by_id(user_id)
         if user is None:
+            print(f"Utilisateur avec ID {user_id} non trouvé")
             raise credentials_exception
             
         return user
