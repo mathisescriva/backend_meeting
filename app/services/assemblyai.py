@@ -11,6 +11,11 @@ import mimetypes
 import subprocess
 import threading
 
+# Import PostgreSQL pour le mode production
+if os.getenv("ENVIRONMENT") == 'production':
+    import psycopg2
+    import psycopg2.extras
+
 # Import du SDK officiel d'AssemblyAI
 import assemblyai as aai
 
@@ -496,12 +501,56 @@ def process_pending_transcriptions():
     }
     
     # Récupérer toutes les transcriptions en attente
-    pending_meetings = get_pending_transcriptions()
-    logger.info(f"Transcriptions en attente: {len(pending_meetings)}")
-    
-    # Récupérer également les transcriptions bloquées en état 'processing'
-    processing_meetings = get_meetings_by_status('processing')
-    logger.info(f"Transcriptions bloquées en état 'processing': {len(processing_meetings)}")
+    # En mode production, utiliser directement les requêtes PostgreSQL
+    if settings.ENVIRONMENT == 'production':
+        # Connexion PostgreSQL
+        conn = None
+        try:
+            # Importer les fonctions PostgreSQL
+            from ..db.postgres_adapter import get_db_connection, release_db_connection
+            
+            conn = get_db_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Requête pour les transcriptions en attente (syntaxe PostgreSQL)
+            cursor.execute(
+                """
+                SELECT * FROM meetings 
+                WHERE transcript_status = 'pending' 
+                AND created_at > NOW() - INTERVAL '%s hours'
+                """,
+                (24,)
+            )
+            pending_meetings = [dict(m) for m in cursor.fetchall()]
+            logger.info(f"Transcriptions en attente: {len(pending_meetings)}")
+            
+            # Requête pour les transcriptions bloquées (syntaxe PostgreSQL)
+            cursor.execute(
+                """
+                SELECT * FROM meetings 
+                WHERE transcript_status = 'processing' 
+                AND created_at > NOW() - INTERVAL '%s hours'
+                ORDER BY created_at DESC
+                """,
+                (72,)
+            )
+            processing_meetings = [dict(m) for m in cursor.fetchall()]
+            logger.info(f"Transcriptions bloquées en état 'processing': {len(processing_meetings)}")
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des transcriptions: {str(e)}")
+            pending_meetings = []
+            processing_meetings = []
+        finally:
+            if conn:
+                release_db_connection(conn)
+    else:
+        # En mode développement, utiliser les fonctions existantes
+        pending_meetings = get_pending_transcriptions()
+        logger.info(f"Transcriptions en attente: {len(pending_meetings)}")
+        
+        # Récupérer également les transcriptions bloquées en état 'processing'
+        processing_meetings = get_meetings_by_status('processing')
+        logger.info(f"Transcriptions bloquées en état 'processing': {len(processing_meetings)}")
     
     # Fusionner les deux listes
     all_meetings_to_process = pending_meetings + processing_meetings
