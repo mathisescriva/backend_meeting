@@ -15,7 +15,13 @@ import threading
 import assemblyai as aai
 
 from ..core.config import settings
-from ..db.queries import update_meeting, get_meeting, normalize_transcript_format
+
+# Importer les fonctions de base de donnu00e9es appropriu00e9es selon l'environnement
+if settings.ENVIRONMENT == 'production':
+    from ..db.postgres_queries import get_pending_transcriptions, get_meetings_by_status
+    from ..db.queries import update_meeting, get_meeting, normalize_transcript_format
+else:
+    from ..db.queries import update_meeting, get_meeting, normalize_transcript_format, get_pending_transcriptions, get_meetings_by_status
 
 # Configuration pour AssemblyAI
 ASSEMBLY_AI_API_KEY = settings.ASSEMBLYAI_API_KEY
