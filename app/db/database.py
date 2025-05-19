@@ -6,15 +6,27 @@ import uuid
 from datetime import datetime
 import threading
 import time
+from ..core.config import settings
 
-# Chemin de la base de données
+# Importer l'adaptateur PostgreSQL si nous sommes en production
+if settings.ENVIRONMENT == 'production':
+    from .postgres_adapter import (
+        get_user_by_email, get_user_by_id, create_user, 
+        get_user_by_email_cached, get_user_by_id_cached,
+        clear_user_cache, purge_old_entries_from_cache,
+        get_password_hash
+    )
+
+# Chemin de la base de données SQLite (utilisé uniquement en développement)
 DB_PATH = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
 
-# Gestionnaire de connexions par thread pour SQLite
-class ThreadLocalConnectionManager:
-    def __init__(self, db_path):
-        self.db_path = db_path
-        self.local = threading.local()
+# Ne pas exécuter le code SQLite si nous sommes en production
+if settings.ENVIRONMENT != 'production':
+    # Gestionnaire de connexions par thread pour SQLite
+    class ThreadLocalConnectionManager:
+        def __init__(self, db_path):
+            self.db_path = db_path
+            self.local = threading.local()
         
     def get_connection(self):
         # Vérifier si ce thread a déjà une connexion
@@ -53,31 +65,37 @@ class ThreadLocalConnectionManager:
             finally:
                 del self.local.connection
 
-# Créer un gestionnaire de connexions par thread global
-db_pool = ThreadLocalConnectionManager(DB_PATH)
-
-def get_password_hash(password: str) -> str:
-    """Hash a password using bcrypt"""
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(password.encode(), salt).decode()
-
-def get_db_connection():
-    """Obtenir une connexion depuis le pool"""
-    return db_pool.get_connection()
-
-def release_db_connection(conn):
-    """Libérer une connexion pour la réutiliser"""
-    db_pool.release_connection(conn)
-
-def reset_db_pool():
-    """Réinitialiser le gestionnaire de connexions en cas de problème"""
-    global db_pool
-    db_pool.close_all()
+# Créer un gestionnaire de connexions par thread global (uniquement en développement)
+if settings.ENVIRONMENT != 'production':
     db_pool = ThreadLocalConnectionManager(DB_PATH)
-    return True
+    
+    def get_password_hash(password: str) -> str:
+        """Hash a password using bcrypt"""
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(password.encode(), salt).decode()
+    
+    def get_db_connection():
+        """Obtenir une connexion depuis le pool"""
+        return db_pool.get_connection()
+
+if settings.ENVIRONMENT != 'production':
+    def release_db_connection(conn):
+        """Libérer une connexion pour la réutiliser"""
+        db_pool.release_connection(conn)
+    
+    def reset_db_pool():
+        """Réinitialiser le gestionnaire de connexions en cas de problème"""
+        global db_pool
+        db_pool.close_all()
+        db_pool = ThreadLocalConnectionManager(DB_PATH)
+        return True
 
 def init_db():
     """Initialiser la base de données avec les tables nécessaires"""
+    # En production, la base de données est gérée séparément
+    if settings.ENVIRONMENT == 'production':
+        return
+        
     conn = None
     try:
         conn = get_db_connection()
@@ -236,64 +254,70 @@ def update_user(user_id, update_data):
         if conn:
             release_db_connection(conn)
 
-# Cache utilisateur (pour limiter les requêtes à la base de données)
-user_cache = {}
-
-# Fonctions avec cache pour les utilisateurs
-def get_user_by_email_cached(email, max_age_seconds=60):
-    """Version mise en cache de get_user_by_email"""
-    current_time = time.time()
-    cache_key = f"email:{email}"
-    
-    # Vérifier si l'utilisateur est dans le cache et si le cache est encore valide
-    if cache_key in user_cache:
-        timestamp, user = user_cache[cache_key]
-        if current_time - timestamp < max_age_seconds:
-            return user
-    
-    # Si pas dans le cache ou expiré, interroger la base de données
-    user = get_user_by_email(email)
-    
-    # Mettre en cache si l'utilisateur existe
-    if user:
-        user_cache[cache_key] = (current_time, user)
-    
-    return user
-
-def get_user_by_id_cached(user_id, max_age_seconds=300):
-    """Version mise en cache de get_user_by_id"""
-    current_time = time.time()
-    cache_key = f"id:{user_id}"
-    
-    # Vérifier si l'utilisateur est dans le cache et si le cache est encore valide
-    if cache_key in user_cache:
-        timestamp, user = user_cache[cache_key]
-        if current_time - timestamp < max_age_seconds:
-            return user
-    
-    # Si pas dans le cache ou expiré, interroger la base de données
-    user = get_user_by_id(user_id)
-    
-    # Mettre en cache si l'utilisateur existe
-    if user:
-        user_cache[cache_key] = (current_time, user)
-    
-    return user
-
-def clear_user_cache():
-    """Vider le cache utilisateur"""
-    global user_cache
+# Fonctions spécifiques à SQLite (uniquement en développement)
+if settings.ENVIRONMENT != 'production':
+    # Cache utilisateur (pour limiter les requêtes à la base de données)
     user_cache = {}
-
-def purge_old_entries_from_cache(max_age_seconds=600):
-    """Purger les entrées de cache trop anciennes"""
-    global user_cache
-    current_time = time.time()
     
-    user_cache = {
-        k: v for k, v in user_cache.items() 
-        if current_time - v[0] < max_age_seconds
-    }
+    # Fonctions avec cache pour les utilisateurs
+    def get_user_by_email_cached(email, max_age_seconds=60):
+        """Version mise en cache de get_user_by_email"""
+        cache_key = f"email:{email}"
+        current_time = datetime.utcnow().timestamp()
+        
+        # Vérifier si l'utilisateur est dans le cache et si le cache est encore valide
+        if cache_key in user_cache:
+            timestamp, user = user_cache[cache_key]
+            if current_time - timestamp < max_age_seconds:
+                return user
+        
+        # Si pas dans le cache ou expiré, récupérer depuis la base de données
+        user = get_user_by_email(email)
+        
+        # Mettre à jour le cache
+        if user:
+            user_cache[cache_key] = (current_time, user)
+        
+        return user
 
-# Initialiser la base de données au démarrage
-init_db()
+    def get_user_by_id_cached(user_id, max_age_seconds=300):
+        """Version mise en cache de get_user_by_id"""
+        cache_key = f"id:{user_id}"
+        current_time = datetime.utcnow().timestamp()
+        
+        # Vérifier si l'utilisateur est dans le cache et si le cache est encore valide
+        if cache_key in user_cache:
+            timestamp, user = user_cache[cache_key]
+            if current_time - timestamp < max_age_seconds:
+                return user
+        
+        # Si pas dans le cache ou expiré, récupérer depuis la base de données
+        user = get_user_by_id(user_id)
+        
+        # Mettre à jour le cache
+        if user:
+            user_cache[cache_key] = (current_time, user)
+        
+        return user
+    
+    def clear_user_cache():
+        """Vider le cache utilisateur"""
+        global user_cache
+        user_cache = {}
+    
+    def purge_old_entries_from_cache(max_age_seconds=600):
+        """Purger les entrées de cache trop anciennes"""
+        global user_cache
+        current_time = datetime.utcnow().timestamp()
+        
+        # Supprimer les entrées trop anciennes
+        user_cache = {
+            k: v for k, v in user_cache.items() 
+            if current_time - v[0] < max_age_seconds
+        }
+
+# Initialiser la base de données au démarrage (uniquement en développement)
+if settings.ENVIRONMENT != 'production':
+    init_db()
+else:
+    print("Mode production détecté, utilisation de l'adaptateur PostgreSQL")
