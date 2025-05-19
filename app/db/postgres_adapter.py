@@ -110,9 +110,19 @@ def get_user_by_id(user_id):
     """Récupérer un utilisateur par son ID depuis PostgreSQL"""
     conn = None
     try:
+        # Log pour débogage
+        logger.info(f"Recherche de l'utilisateur avec ID: {user_id}, Type: {type(user_id)}")
+        
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         
+        # S'assurer que l'ID est du bon type pour PostgreSQL
+        if isinstance(user_id, str) and user_id.isdigit():
+            user_id = int(user_id)
+            logger.info(f"ID utilisateur converti en entier: {user_id}")
+        
+        # Exécuter la requête
+        logger.info(f"Exécution de la requête SQL avec ID: {user_id}, Type: {type(user_id)}")
         cursor.execute("""
         SELECT id, email, hashed_password, full_name, created_at
         FROM users
@@ -122,7 +132,11 @@ def get_user_by_id(user_id):
         user = cursor.fetchone()
         if user:
             # Convertir en dictionnaire
-            return dict(user)
+            user_dict = dict(user)
+            logger.info(f"Utilisateur trouvé: {user_dict.get('email')}")
+            return user_dict
+        
+        logger.info(f"Aucun utilisateur trouvé avec ID: {user_id}")
         return None
     except Exception as e:
         logger.error(f"Erreur lors de la récupération de l'utilisateur par ID: {str(e)}")
