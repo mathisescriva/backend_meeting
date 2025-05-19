@@ -105,7 +105,7 @@ def transcribe_meeting(meeting_id: str, file_url: str, user_id: str) -> Optional
         logger.info(f"Statut de la réunion {meeting_id} mis à jour à 'processing'")
         
         # Uploader le fichier vers AssemblyAI
-        upload_url = upload_file(file_path)
+        upload_url = upload_file_to_assemblyai(file_path)
         logger.info(f"Fichier {file_path} uploadé avec succès vers AssemblyAI: {upload_url}")
         
         # Démarrer la transcription

@@ -155,17 +155,30 @@ def normalize_transcript_format(text):
     
     return normalized_text
 
-def get_meetings_by_user(user_id):
-    """Récupérer toutes les réunions d'un utilisateur"""
+def get_meetings_by_user(user_id, status=None):
+    """
+    Récupérer toutes les réunions d'un utilisateur
+    
+    Args:
+        user_id: ID de l'utilisateur
+        status: Filtre optionnel pour le statut de transcription
+    """
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         
         try:
-            cursor.execute(
-                "SELECT * FROM meetings WHERE user_id = ? ORDER BY created_at DESC", 
-                (user_id,)
-            )
+            # Si un statut est spécifié, filtrer par statut
+            if status:
+                cursor.execute(
+                    "SELECT * FROM meetings WHERE user_id = ? AND transcript_status = ? ORDER BY created_at DESC", 
+                    (user_id, status)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM meetings WHERE user_id = ? ORDER BY created_at DESC", 
+                    (user_id,)
+                )
             meetings = cursor.fetchall()
             
             # Convertir les résultats en dictionnaires et renommer transcript_status en transcription_status
