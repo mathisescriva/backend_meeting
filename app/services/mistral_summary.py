@@ -6,7 +6,8 @@ from ..core.config import settings
 import requests
 
 # Configuration pour Mistral AI
-MISTRAL_API_KEY = settings.MISTRAL_API_KEY
+# Utiliser directement la clé API fournie au lieu de passer par settings
+MISTRAL_API_KEY = "40zsZTwSIFoAISjk1POC3rZ09GfF6WDH"
 MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
 
 # Configuration du logging
@@ -31,29 +32,81 @@ def generate_meeting_summary(transcript_text: str, meeting_title: Optional[str] 
         # Préparer le prompt pour Mistral
         title_part = f" intitulée '{meeting_title}'" if meeting_title else ""
         
-        prompt = f"""Tu es un assistant spécialisé dans la création de comptes rendus de réunion.
-        
-        Voici la transcription d'une réunion{title_part}.
-        Crée un compte rendu structuré STRICTEMENT selon les 4 parties suivantes :
-        
-        # Synthèse
-        Une synthèse concise de la réunion en quelques lignes seulement.
-        
-        # Éléments discutés
-        Les principaux points et sujets abordés pendant la réunion, présentés sous forme de liste à puces.
-        
-        # Relevé de décisions
-        Toutes les décisions prises lors de la réunion, présentées sous forme de liste à puces.
-        
-        # Plan d'action
-        Les actions à entreprendre avec leurs responsables (si mentionnés) et les échéances (si mentionnées), présentées sous forme de liste à puces.
-        
-        Respecte IMPÉRATIVEMENT cette structure en 4 parties avec ces titres exacts. Utilise un format clair avec des listes à puces et des paragraphes bien organisés.
-        
-        Transcription:
-        {transcript_text}
-        """
-        
+        prompt = f"""Objectif :
+À partir d'une transcription brute d'une réunion, produire un compte rendu EXACTEMENT selon le format d'exemple fourni ci-dessous, intégrant précisément les emojis, les titres, les tableaux, et le style montrés.
+
+VOICI UN EXEMPLE EXACT DU FORMAT DE SORTIE QUE TU DOIS REPRODUIRE :
+
+# 📅 Réunion du [date inconnue ou date exacte si mentionnée] u2014 [Titre de la réunion ou sujet principal]
+
+- 👥 **Participants** : [Liste des participants]
+- ✏️ **Animateur/trice** : [Nom de l'animateur si identifiable]
+- 🕒 **Durée estimée** : [Durée si mentionnée]
+
+---
+
+## 🧠 Résumé express
+Un paragraphe de 3-4 lignes résumant l'essentiel de la réunion.
+
+---
+
+## 🗂️ Ordre du jour *(reconstruit)*
+1. 📡 [Premier point]
+2. 💰 [Deuxième point]
+3. 👤 [Troisième point]
+4. ⏱️ [Quatrième point]
+
+---
+
+## ✅ Décisions prises
+- 🔒 [Décision 1] *([Nom de la personne])*
+- 💰 [Décision 2] *([Nom de la personne])*
+- 👥 [Décision 3] *([Nom de la personne])*
+
+---
+
+## 🔜 Tâches & actions à suivre
+
+| 📌 Tâche | 👤 Responsable | ⏳ Échéance | 🔗 Liée à |
+|------------------|----------------|----------------|-----------|
+| [Description tâche 1] | [Responsable] | [Échéance] | [Lien] |
+| [Description tâche 2] | [Responsable] | [Échéance] | [Lien] |
+
+---
+
+## ⚠️ Points de vigilance
+- ⚠️ [Point de vigilance 1]
+- 🔄 [Point de vigilance 2]
+
+---
+
+## 🧵 Sujets abordés
+
+| 💬 Sujet | 🗣️ Intervenants |
+|-------------|------------------------|
+| [Sujet 1] | [Liste des intervenants] |
+| [Sujet 2] | [Liste des intervenants] |
+| [Sujet 3] | [Liste des intervenants] |
+| [Sujet 4] | [Liste des intervenants] |
+
+---
+
+## 📚 Ressources mentionnées
+- [Ressource 1]
+- [Ressource 2]
+- [Ressource 3]
+
+---
+
+## 🗓️ Prochaine réunion
+📍 [Date et heure de la prochaine réunion si mentionnée]
+
+UTILISE EXACTEMENT CE FORMAT, avec les mêmes emojis et la même mise en page, mais REMPLACE TOUS LES PLACEHOLDERS ENTRE CROCHETS par les informations réelles extraites de la transcription. Ne laisse AUCUN texte du type '[Premier point]' ou '[Sujet 1]' dans ta réponse. Si tu n'as pas l'information pour une section, indique-le clairement (ex: "Non mentionné" ou "Aucun point identifié"), mais NE CONSERVE PAS les placeholders entre crochets.
+
+Voici la transcription d'une réunion{title_part} :
+
+{transcript_text}
+"""        
         # Préparer la requête pour l'API Mistral
         headers = {
             "Content-Type": "application/json",

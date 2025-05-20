@@ -11,17 +11,14 @@ import mimetypes
 import subprocess
 import threading
 
-# Import du SDK officiel d'AssemblyAI
-import assemblyai as aai
-
 from ..core.config import settings
 from ..db.queries import update_meeting, get_meeting, normalize_transcript_format
 
 # Configuration pour AssemblyAI
 # Utiliser directement la clé API fournie au lieu de passer par settings
 ASSEMBLY_AI_API_KEY = "3419005ee6924e08a14235043cabcd4e"
-# Configurer le SDK AssemblyAI
-aai.settings.api_key = ASSEMBLY_AI_API_KEY
+# URL de base de l'API AssemblyAI
+ASSEMBLY_AI_BASE_URL = "https://api.assemblyai.com/v2"
 
 # Configuration du logging
 logger = logging.getLogger("meeting-transcriber")
@@ -129,23 +126,8 @@ def transcribe_meeting(meeting_id: str, file_url: str, user_id: str) -> Optional
         except Exception as db_error:
             logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
 
-# Fonction simplifiée pour soumettre une transcription avec gestion d'erreur basique
-def transcribe_simple(transcriber, audio_source, config):
-    """Fonction simplifiée qui tente de transcrire sans dépendance à backoff"""
-    try:
-        return transcriber.submit(audio_source, config)
-    except Exception as e:
-        logger.error(f"Erreur lors de la transcription: {str(e)}")
-        # Si c'est une erreur de connexion au serveur Render, ajouter un message spécifique
-        if "Cannot connect to backend server" in str(e) or "Network connection error" in str(e):
-            error_msg = (
-                f"Erreur de connexion au serveur. Cela peut être dû au plan Render "
-                f"qui a des limitations de ressources. "
-                f"Veuillez réessayer dans quelques instants."
-            )
-            logger.error(error_msg)
-            raise Exception(error_msg) from e
-        raise
+# Note: La fonction transcribe_simple qui utilisait le SDK AssemblyAI a été supprimée
+# Elle a été remplacée par les fonctions upload_file_to_assemblyai et start_transcription
 
 def process_transcription(meeting_id: str, file_url: str, user_id: str):
     """
@@ -190,20 +172,11 @@ def process_transcription(meeting_id: str, file_url: str, user_id: str):
         else:
             logger.info(f"Utilisation de l'URL externe: {audio_source}")
         
-        # Configuration ultra-simplifiée de la transcription
-        config = aai.TranscriptionConfig(
-            speaker_labels=True,  # Conserver uniquement la diarisation des locuteurs
-            language_code="fr",  # Langue française par défaut
-            # Désactiver toutes les fonctionnalités non essentielles
-            auto_highlights=False,
-            content_safety=False,
-            entity_detection=False,
-            iab_categories=False,
-            sentiment_analysis=False
-        )
+        # Configuration de la transcription pour l'API REST directe
+        # Cette configuration sera utilisée dans start_transcription
         
-        # Version ultra-simplifiée : juste soumettre la transcription et stocker l'ID
-        logger.info(f"Soumission simplifiée de la transcription pour: {audio_source}")
+        # Version simplifiée utilisant directement l'API REST AssemblyAI
+        logger.info(f"Soumission de la transcription via API REST pour: {audio_source}")
         
         # Uploader le fichier vers AssemblyAI (si c'est un fichier local)
         if audio_source.startswith("/") and os.path.exists(audio_source):
