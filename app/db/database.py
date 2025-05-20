@@ -8,7 +8,10 @@ import threading
 import time
 
 # Chemin de la base de données
-DB_PATH = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
+# Utiliser le disque persistant Render si disponible, sinon utiliser le chemin par défaut
+# Utilisation de /data comme chemin vers le disque persistant monté sur Render
+RENDER_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "/data")
+DB_PATH = Path(RENDER_DISK_PATH) / "app.db" if os.path.exists(RENDER_DISK_PATH) else Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
 
 # Gestionnaire de connexions par thread pour SQLite
 class ThreadLocalConnectionManager:
@@ -83,6 +86,13 @@ def init_db():
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # Vérifier si le chemin de la base de données est sur le disque persistant Render
+        is_render_disk = os.path.exists(RENDER_DISK_PATH) and str(DB_PATH).startswith(RENDER_DISK_PATH)
+        if is_render_disk:
+            print(f"Base de données sur disque persistant Render: {DB_PATH}")
+        else:
+            print(f"Base de données locale: {DB_PATH}")
+        
         # Vérifier si les tables existent déjà
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
         users_table_exists = cursor.fetchone() is not None
@@ -142,6 +152,30 @@ def init_db():
         
         # Création d'index pour améliorer les performances
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_meeting_user ON meetings(user_id)')
+        
+        # Vérifier si la colonne client_id existe déjà dans meetings
+        cursor.execute("PRAGMA table_info(meetings)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        # Ajouter la colonne client_id si elle n'existe pas
+        if 'client_id' not in columns:
+            cursor.execute("ALTER TABLE meetings ADD COLUMN client_id TEXT")
+            print("Colonne client_id ajoutée à la table meetings")
+            
+        # Création de la table clients
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS clients (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                summary_template TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        ''')
+        
+        # Création d'index pour la table clients
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_client_user ON clients(user_id)')
         
         conn.commit()
         print("Database initialized successfully")

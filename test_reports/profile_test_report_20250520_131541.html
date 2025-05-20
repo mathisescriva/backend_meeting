@@ -1,0 +1,125 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Rapport de test des endpoints de profil</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                h1 { color: #333; }
+                .summary { background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+                .success { color: green; }
+                .failure { color: red; }
+                .skipped { color: orange; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; }
+                tr:nth-child(even) { background-color: #f9f9f9; }
+            </style>
+        </head>
+        <body>
+            <h1>Rapport de test des endpoints de profil</h1>
+            <div class="summary">
+                <h2>Résumé</h2>
+                <p>Date: 2025-05-20 13:15:41</p>
+                <p>Total des tests: 7</p>
+                <p class="success">Réussis: 7</p>
+                <p class="failure">Échoués: 0</p>
+                <p class="skipped">Ignorés: 0</p>
+                <p>Taux de réussite: 100.00%</p>
+            </div>
+            <h2>Détails des logs</h2>
+            <pre>[2025-05-20 13:15:40] [INFO] 
+==================================================
+[2025-05-20 13:15:40] [INFO] DÉBUT DES TESTS DES ENDPOINTS DE PROFIL - 2025-05-20 13:15:40
+[2025-05-20 13:15:40] [INFO] ==================================================
+
+[2025-05-20 13:15:40] [INFO] 
+===== AUTHENTIFICATION =====
+[2025-05-20 13:15:41] [INFO] Status code: 200
+[2025-05-20 13:15:41] [INFO] Response: {
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5OWRmZDk3Zi1hNjVhLTQ4ODEtYjkxNy0zMTgyNTQyODU3MjciLCJleHAiOjE3NzkyNzU3NDF9.w4IRmKB5Z8Nezo2qF5OTG9yffOOHESwvyos-fpzh0SU",
+  "token_type": "bearer",
+  "expires_in": 31536000
+}
+[2025-05-20 13:15:41] [INFO] ✅ Authentification réussi
+[2025-05-20 13:15:41] [INFO] 
+===== TEST DE RÉCUPÉRATION DU PROFIL =====
+[2025-05-20 13:15:41] [INFO] Status code: 200
+[2025-05-20 13:15:41] [INFO] Response: {
+  "email": "test@example.com",
+  "full_name": "Test User Updated 13:14:03",
+  "profile_picture_url": null,
+  "id": "99dfd97f-a65a-4881-b917-318254285727",
+  "created_at": "2025-03-05T16:55:32.744623"
+}
+[2025-05-20 13:15:41] [INFO] ✅ Récupération du profil réussi
+[2025-05-20 13:15:41] [INFO] 
+===== TEST DE MISE À JOUR DU PROFIL =====
+[2025-05-20 13:15:41] [INFO] Données à mettre à jour: {
+  "full_name": "Test User Updated 13:15:41",
+  "settings": {
+    "theme": "dark",
+    "language": "fr"
+  }
+}
+[2025-05-20 13:15:41] [INFO] Status code: 200
+[2025-05-20 13:15:41] [INFO] Response: {
+  "email": "test@example.com",
+  "full_name": "Test User Updated 13:15:41",
+  "profile_picture_url": null,
+  "id": "99dfd97f-a65a-4881-b917-318254285727",
+  "created_at": "2025-03-05T16:55:32.744623"
+}
+[2025-05-20 13:15:41] [INFO] ✅ Mise à jour du profil réussi
+[2025-05-20 13:15:41] [INFO] 
+===== TEST D'UPLOAD DE PHOTO DE PROFIL =====
+[2025-05-20 13:15:41] [INFO] Status code: 200
+[2025-05-20 13:15:41] [INFO] Response: {
+  "email": "test@example.com",
+  "full_name": "Test User Updated 13:15:41",
+  "profile_picture_url": "/uploads/profile_pictures/99dfd97f-a65a-4881-b917-318254285727/profile_fd8fe957.png",
+  "id": "99dfd97f-a65a-4881-b917-318254285727",
+  "created_at": "2025-03-05T16:55:32.744623"
+}
+[2025-05-20 13:15:41] [INFO] ✅ Upload de photo de profil réussi
+[2025-05-20 13:15:41] [INFO] 
+===== TEST DE MISE À JOUR DE L'EMAIL =====
+[2025-05-20 13:15:41] [INFO] Nouvel email: test+131541@example.com
+[2025-05-20 13:15:41] [INFO] Status code: 200
+[2025-05-20 13:15:41] [INFO] Response: {
+  "email": "test+131541@example.com",
+  "full_name": "Test User Updated 13:15:41",
+  "profile_picture_url": "/uploads/profile_pictures/99dfd97f-a65a-4881-b917-318254285727/profile_fd8fe957.png",
+  "id": "99dfd97f-a65a-4881-b917-318254285727",
+  "created_at": "2025-03-05T16:55:32.744623"
+}
+[2025-05-20 13:15:41] [INFO] ✅ Mise à jour de l'email réussi
+[2025-05-20 13:15:41] [INFO] 
+===== TEST DE MISE À JOUR DE L'EMAIL =====
+[2025-05-20 13:15:41] [INFO] Nouvel email: test@example.com
+[2025-05-20 13:15:41] [INFO] Status code: 200
+[2025-05-20 13:15:41] [INFO] Response: {
+  "email": "test@example.com",
+  "full_name": "Test User Updated 13:15:41",
+  "profile_picture_url": "/uploads/profile_pictures/99dfd97f-a65a-4881-b917-318254285727/profile_fd8fe957.png",
+  "id": "99dfd97f-a65a-4881-b917-318254285727",
+  "created_at": "2025-03-05T16:55:32.744623"
+}
+[2025-05-20 13:15:41] [INFO] ✅ Mise à jour de l'email réussi
+[2025-05-20 13:15:41] [INFO] 
+===== TEST DE RÉCUPÉRATION DU PROFIL =====
+[2025-05-20 13:15:41] [INFO] Status code: 200
+[2025-05-20 13:15:41] [INFO] Response: {
+  "email": "test@example.com",
+  "full_name": "Test User Updated 13:15:41",
+  "profile_picture_url": "/uploads/profile_pictures/99dfd97f-a65a-4881-b917-318254285727/profile_fd8fe957.png",
+  "id": "99dfd97f-a65a-4881-b917-318254285727",
+  "created_at": "2025-03-05T16:55:32.744623"
+}
+[2025-05-20 13:15:41] [INFO] ✅ Récupération du profil réussi
+[2025-05-20 13:15:41] [INFO] 
+===== GÉNÉRATION DU RAPPORT DE TEST =====
+</pre>
+        </body>
+        </html>
+        

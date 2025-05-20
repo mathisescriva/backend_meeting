@@ -21,6 +21,7 @@ router = APIRouter(prefix="/meetings", tags=["Réunions"])
 async def upload_meeting(
     file: UploadFile = File(..., description="Fichier audio à transcrire"),
     title: Optional[str] = None,
+    client_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -96,8 +97,12 @@ async def upload_meeting(
             meeting_data = {
                 "title": title,
                 "file_url": file_url,
-                "transcript_status": "processing"  
+                "transcript_status": "processing"
             }
+            
+            # Ajouter client_id si fourni
+            if client_id:
+                meeting_data["client_id"] = client_id
             meeting = create_meeting(meeting_data, current_user["id"])
             
             # Lancer la transcription de manière asynchrone avec logs détaillés

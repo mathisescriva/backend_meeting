@@ -13,13 +13,46 @@ MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
 # Configuration du logging
 logger = logging.getLogger("meeting-transcriber")
 
-def generate_meeting_summary(transcript_text: str, meeting_title: Optional[str] = None) -> Optional[str]:
+def get_client_template(client_id: Optional[str] = None, user_id: Optional[str] = None) -> Optional[str]:
+    """
+    Récupère le template de résumé associé à un client.
+    
+    Args:
+        client_id: ID du client (optionnel)
+        user_id: ID de l'utilisateur propriétaire du client (optionnel)
+        
+    Returns:
+        str: Template de résumé ou None si aucun template n'est trouvé
+    """
+    if not client_id or not user_id:
+        return None
+        
+    try:
+        # Importer les fonctions ici pour éviter les imports circulaires
+        from ..db.client_queries import get_client
+        
+        # Récupérer les informations du client
+        client = get_client(client_id, user_id)
+        
+        if client and client.get("summary_template"):
+            logger.info(f"Template de résumé trouvé pour le client {client_id}")
+            return client["summary_template"]
+        else:
+            logger.info(f"Aucun template de résumé trouvé pour le client {client_id}")
+            return None
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération du template client: {str(e)}")
+        return None
+
+def generate_meeting_summary(transcript_text: str, meeting_title: Optional[str] = None, client_id: Optional[str] = None, user_id: Optional[str] = None) -> Optional[str]:
     """
     Génère un compte rendu de réunion à partir d'une transcription en utilisant l'API Mistral.
     
     Args:
         transcript_text: Texte de la transcription de la réunion
         meeting_title: Titre de la réunion (optionnel)
+        client_id: ID du client pour personnaliser le résumé (optionnel)
+        user_id: ID de l'utilisateur qui demande le résumé (optionnel)
         
     Returns:
         str: Compte rendu généré ou None en cas d'erreur
@@ -29,10 +62,23 @@ def generate_meeting_summary(transcript_text: str, meeting_title: Optional[str] 
         return None
         
     try:
-        # Préparer le prompt pour Mistral
+        # Vérifier s'il existe un template client personnalisé
+        client_template = None
+        if client_id and user_id:
+            client_template = get_client_template(client_id, user_id)
+        
         title_part = f" intitulée '{meeting_title}'" if meeting_title else ""
         
-        prompt = f"""Objectif :
+        # Utiliser le template personnalisé s'il existe, sinon utiliser le template par défaut
+        if client_template:
+            # Remplacer les variables dans le template client
+            prompt = client_template.replace("{transcript_text}", transcript_text)
+            if meeting_title:
+                prompt = prompt.replace("{meeting_title}", meeting_title)
+            logger.info("Utilisation d'un template client personnalisé")
+        else:
+            # Template par défaut
+            prompt = f"""Objectif :
 À partir d'une transcription brute d'une réunion, produire un compte rendu EXACTEMENT selon le format d'exemple fourni ci-dessous, intégrant précisément les emojis, les titres, les tableaux, et le style montrés.
 
 VOICI UN EXEMPLE EXACT DU FORMAT DE SORTIE QUE TU DOIS REPRODUIRE :
@@ -146,7 +192,7 @@ Voici la transcription d'une réunion{title_part} :
         logger.error(f"Erreur lors de la génération du compte rendu: {str(e)}")
         return None
 
-def process_meeting_summary(meeting_id: str, user_id: str):
+def process_meeting_summary(meeting_id: str, user_id: str, client_id: Optional[str] = None):
     """
     Traite la génération du compte rendu pour une réunion spécifique.
     
@@ -155,6 +201,7 @@ def process_meeting_summary(meeting_id: str, user_id: str):
     Args:
         meeting_id: Identifiant de la réunion
         user_id: Identifiant de l'utilisateur
+        client_id: Identifiant du client pour personnaliser le résumé (optionnel)
     
     Returns:
         bool: True si le traitement a réussi, False sinon
@@ -176,8 +223,15 @@ def process_meeting_summary(meeting_id: str, user_id: str):
             update_meeting(meeting_id, user_id, {"summary_status": "error", "summary_text": "La transcription n'est pas disponible"})
             return False
             
+        # Récupérer le client_id depuis la réunion si pas fourni en paramètre
+        if not client_id and "client_id" in meeting:
+            client_id = meeting.get("client_id")
+            
         # Mettre à jour le statut pour indiquer que la génération est en cours
-        update_meeting(meeting_id, user_id, {"summary_status": "processing"})
+        update_data = {"summary_status": "processing"}
+        if client_id:
+            update_data["client_id"] = client_id
+        update_meeting(meeting_id, user_id, update_data)
         
         # Stocker les données nécessaires pour le thread
         transcript_text = meeting["transcript_text"]
@@ -186,8 +240,8 @@ def process_meeting_summary(meeting_id: str, user_id: str):
         # Lancer la génération dans un thread séparé pour ne pas bloquer
         def generate_summary_thread():
             try:
-                # Générer le compte rendu
-                summary = generate_meeting_summary(transcript_text, meeting_title)
+                # Générer le compte rendu avec le paramètre client_id
+                summary = generate_meeting_summary(transcript_text, meeting_title, client_id, user_id)
                 
                 if summary:
                     # Mise à jour directe de la base de données en utilisant sqlite3

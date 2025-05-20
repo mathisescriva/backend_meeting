@@ -1,0 +1,263 @@
+
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Rapport de Test API - 2025-05-20 12:48:21</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            h1 { color: #333; }
+            .summary { margin: 20px 0; padding: 10px; background-color: #f5f5f5; border-radius: 5px; }
+            .success { color: green; }
+            .failure { color: red; }
+            .test-result { margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+            .test-result.success { border-left: 5px solid green; }
+            .test-result.failure { border-left: 5px solid red; }
+            .details { margin-top: 10px; font-family: monospace; white-space: pre-wrap; background-color: #f9f9f9; padding: 10px; border-radius: 3px; max-height: 200px; overflow: auto; }
+        </style>
+    </head>
+    <body>
+        <h1>Rapport de Test API - 2025-05-20 12:48:21</h1>
+        
+        <div class="summary">
+            <h2>Ru00e9sumu00e9</h2>
+            <p>Tests exu00e9cutu00e9s: 9</p>
+            <p class="success">Ru00e9ussis: 9</p>
+            <p class="failure">Echouu00e9s: 0</p>
+            <p>Ignoru00e9s: 0</p>
+            <p>Taux de ru00e9ussite: 100.0%</p>
+        </div>
+        
+        <h2>Du00e9tails des Tests</h2>
+        
+        <div class="test-result success">
+            <h3>Vérification de santé</h3>
+            <p>Statut: Ru00e9ussi</p>
+            <p>Heure: 2025-05-20 12:48:19</p>
+            
+            <div class="details">
+                <h4>Ru00e9ponse:</h4>
+                <pre>{
+  "status": "healthy",
+  "timestamp": 1747738099.2220302
+}</pre>
+            </div>
+            
+            
+        </div>
+        
+        <div class="test-result success">
+            <h3>Authentification</h3>
+            <p>Statut: Ru00e9ussi</p>
+            <p>Heure: 2025-05-20 12:48:19</p>
+            
+            <div class="details">
+                <h4>Ru00e9ponse:</h4>
+                <pre>{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5OWRmZDk3Zi1hNjVhLTQ4ODEtYjkxNy0zMTgyNTQyODU3MjciLCJleHAiOjE3NzkyNzQwOTl9.gmf6MRpqWDPgRSM5HdA5W-7Tv7WK8YnNaNoARYJEcak",
+  "expires_in": 31536000,
+  "token_type": "bearer"
+}</pre>
+            </div>
+            
+            
+        </div>
+        
+        <div class="test-result success">
+            <h3>Ru00e9cupu00e9ration des informations de l'utilisateur</h3>
+            <p>Statut: Ru00e9ussi</p>
+            <p>Heure: 2025-05-20 12:48:19</p>
+            
+            <div class="details">
+                <h4>Ru00e9ponse:</h4>
+                <pre>{
+  "created_at": "2025-03-05T16:55:32.744623",
+  "email": "test@example.com",
+  "full_name": "Test User",
+  "id": "99dfd97f-a65a-4881-b917-318254285727",
+  "profile_picture_url": null
+}</pre>
+            </div>
+            
+            
+        </div>
+        
+        <div class="test-result success">
+            <h3>Récupération des réunions (endpoint simplifié)</h3>
+            <p>Statut: Ru00e9ussi</p>
+            <p>Heure: 2025-05-20 12:48:19</p>
+            
+            <div class="details">
+                <h4>Ru00e9ponse:</h4>
+                <pre>{
+  "count": 22,
+  "sample": [
+    {
+      "created_at": "2025-05-20T10:46:09.411718",
+      "duration_seconds": null,
+      "file_url": "/uploads/99dfd97f-a65a-4881-b917-318254285727/20250520_124609_test_audio.mp3",
+      "id": "b7c1e72e-a8dc-49ca-b705-d91b675fc4b9",
+      "metadata": null,
+      "speakers_count": null,
+      "summary_status": null,
+      "summary_text": null,
+      "title": "test_audio.mp3",
+      "transcript_id": "73e66add-07d6-4b19-bb7f-ffca6422a55b",
+      "transcript_metadata": null,
+      "transcript_status": "error",
+      "transcript_text": "Erreur lors de la transcription: Transcoding failed. File does not appear to contain audio. File type is text/html (HTML document, ASCII text, with very long lines (2233)).",
+      "transcription_status": "error",
+      "updated_at": null,
+      "user_id": "99dfd97f-a65a-4881-b917-318254285727"
+    },
+    {
+      "created_at": "2025-05-20T09:43:55.886436",
+      "duration_seconds": 431,
+      "file_url": "/uploads/99dfd97f-a65a-4881-b917-318254285727/20250520_114355_test_audio.mp3",
+      "id": "e93b57cb-7a41-4a05-9b7e-dd75d3d2bc0a",
+      "metadata": null,
+      "speakers_count": 4,
+      "summary_status": "completed",
+      "summary_text": "# Synth\u00e8se\nLa r\u00e9union a d\u00e9but\u00e9 par l\u0027accueil de nouveaux \u00e9lus, Delphine de Verneuil et Franck Qu\u00e9mone, et la d\u00e9signation de Mme Piccard comme secr\u00e9taire de s\u00e9ance. La s\u00e9ance a ensuite abord\u00e9 les d\u00e9ports pour diverses d\u00e9lib\u00e9rations et l\u0027approbation des proc\u00e8s-verbaux des s\u00e9ances pr\u00e9c\u00e9dentes. Une discussion a eu lieu concernant un march\u00e9 pass\u00e9 pour une \u0153uvre d\u0027art dans le quartier Est de la ville d\u0027Orl\u00e9ans, avec des pr\u00e9cisions apport\u00e9es par Mme Carr\u00e9 et la direction de la culture.\n\n# \u00c9l\u00e9ments discut\u00e9s\n- Accueil des nouveaux \u00e9lus : Delphine de Verneuil et Franck Qu\u00e9mone.\n- D\u00e9signation de Mme Piccard comme secr\u00e9taire de s\u00e9ance.\n- Lecture des d\u00e9ports pour diverses d\u00e9lib\u00e9rations.\n- Approbation des proc\u00e8s-verbaux des s\u00e9ances de juin et juillet.\n- Discussion sur un march\u00e9 pass\u00e9 pour une \u0153uvre d\u0027art dans le quartier Est de la ville d\u0027Orl\u00e9ans, avec des questions sur la nature de l\u0027\u0153uvre et son co\u00fbt.\n- Pr\u00e9cisions apport\u00e9es par Mme Carr\u00e9 et la direction de la culture sur le projet de l\u0027\u0153uvre d\u0027art.\n\n# Relev\u00e9 de d\u00e9cisions\n- D\u00e9signation de Mme Piccard comme secr\u00e9taire de s\u00e9ance.\n- Approbation des proc\u00e8s-verbaux des s\u00e9ances de juin et juillet sans remarques, oppositions ou abstentions.\n- Approbation des comptes-rendus des d\u00e9cisions prises et des march\u00e9s pass\u00e9s sans remarques, oppositions ou abstentions.\n\n# Plan d\u0027action\n- Aucune action sp\u00e9cifique mentionn\u00e9e avec des responsables ou des \u00e9ch\u00e9ances.",
+      "title": "test_audio.mp3",
+      "transcript_id": "805c637a-28a9-4c3d-9e94-1b75b6731adc",
+      "transcript_metadata": null,
+      "transcript_status": "completed",
+      "transcript_text": "Speaker A: Eh bien, mes chers coll\u00e8gues, puisque nous avons le quorum, je vous propose de rejoindre vos emplacements, que nous puissions ouvrir cette s\u00e9ance. Et... je vous propose de d\u00e9signer Mme Piccard comme secr\u00e9taire de s\u00e9ance. Y a-t-il des oppositions ? Il n\u0027y en a pas. Donc, f\u00e9licitations pour cette belle unanimit\u00e9. Et puis, mes chers coll\u00e8gues, suite au retrait de M. Deroni et de M. Bri\u00e9, nous avons le tr\u00e8s grand plaisir d\u0027accueillir 2 nouveaux \u00e9lus en la personne de Delphine de Verneuil, ici pr\u00e9sente, et en la personne de Franck Qu\u00e9mone, ici pr\u00e9sent. Alors, au nom du Conseil, je vous souhaite une chaleureuse bienvenue. Je pr\u00e9cise qu\u0027il n\u0027y a pas de bizutage pr\u00e9vu, donc vous pouvez \u00eatre parfaitement d\u00e9tendus. Alors, je vais vous donner lecture \u00e9galement des d\u00e9ports. Donc j\u0027en ai pour une bonne heure, l\u00e0. C\u0027est d\u0027ailleurs tr\u00e8s int\u00e9ressant parce que sont oblig\u00e9s de se d\u00e9porter... Voil\u00e0, les \u00e9lus, quand m\u00eame, qui pr\u00e9sentent des comp\u00e9tences fortes sur les sujets abord\u00e9s. Ainsi va la loi. Donc, pour la d\u00e9lib\u00e9ration num\u00e9ro 4, Mme Carr\u00e9. Pour la 5, M. Clausset. Pour la 10 et la 11, M. Renaud. Pour la 14, Mme Carr\u00e9. Pour la 17, M. Coutoul, Mme Laperteau, M. Montillot. Pour la 19, M. Coutoul, Mme Rastoul, M. Rose. Pour la 20, M. D\u00e9foss\u00e9. Pour la 33, M. Chanserelle, Mme F\u00e9drigo, M. Lemenian, Mme Pouls. Pour la 34, M. Chanserelle, M. Gabel, Mme Pouls. Pour la 35, M. Chanserelle, Mme Kounovski, M. Le Maignan, Mme Pouls, M. Tebibel. Pour la 36, M. Chanserelle, Mme F\u00e9drigo, Mme Pouls. Pour les 37 et 38...\nSpeaker B: Je suis aussi dans un d\u00e9port sur la 36. \u00c7a concerne le CCN, c\u0027est \u00e7a ?\nSpeaker A: Alors, je trouvais qu\u0027il n\u0027y avait pas beaucoup de d\u00e9ports sur la 36, donc je vous remercie, Mme Kounovski, de rejoindre.\nSpeaker B: Le club des d\u00e9ports.\nSpeaker A: Donc je reprends la 36, M. Chancerelle, Mme F\u00e9drigo, Mme Pouls et Mme Kounovski. Pour les 37 et 38, Mme Baruelle, M. Bornet, M. Clauset, Mme Corner, M. Hussard, Mme Labadie, M. Montillot, M. Roy, M. Tebibel. Restent-ils des votants ? Et pour les 54 et 56, M. Hussard, y aurait-il d\u0027autres d\u00e9ports ? Non, pendant qu\u0027on y est, on peut en ajouter quelques-uns. Bien, il n\u0027y a pas d\u0027autre d\u00e9port. Vous pouvez n\u00e9anmoins vous manifester au moment des d\u00e9lib\u00e9rations, vous le savez. Alors, nous en venons \u00e0 l\u0027approbation des proc\u00e8s-verbaux des s\u00e9ances de juin et de juillet. Y a-t-il des remarques ? S\u0027il n\u0027y a pas de remarques, y a-t-il des abstentions, des oppositions ? Ils sont donc adopt\u00e9s. M\u00eame question sur les comptes-rendus des d\u00e9cisions prises et des march\u00e9s qui ont \u00e9t\u00e9 pass\u00e9s. Pas de remarques, pas d\u0027opposition, pas d\u0027abstention. Oui, Mme Kounovski.\nSpeaker B: Oui, c\u0027est \u00e0 propos des march\u00e9s pass\u00e9s, M. le maire. Je voudrais simplement avoir...\nSpeaker A: Je vais vous demander un petit peu de silence, s\u0027il vous pla\u00eet, parce que... Voil\u00e0.\nSpeaker B: Oui, simplement, c\u0027est au sujet de la liste des march\u00e9s pass\u00e9s. Je voudrais juste avoir une pr\u00e9cision sur un point qui concerne la page 7, je crois. En fait, il s\u0027agit d\u0027un march\u00e9 pass\u00e9 pour la conception et la r\u00e9alisation d\u0027une \u0153uvre d\u0027art Pour le quartier Est de la ville d\u0027Orl\u00e9ans, tr\u00e8s bien, Thomas Formont, et on est quand m\u00eame \u00e0 un montant assez \u00e9lev\u00e9 de 66 720. Donc, c\u0027est quelque chose qu\u0027on n\u0027a jamais abord\u00e9 en commission culture, parce que, peut-\u00eatre que ce n\u0027est pas une \u0153uvre d\u0027art, sculpture, peinture et tout, mais je voudrais savoir de quoi il s\u0027agit exactement, parce que la somme est quand m\u00eame relativement \u00e9lev\u00e9e. Alors, Thomas Formon est quelqu\u0027un qui intervient dans le monde de l\u0027architecture, de la restauration de patrimoine, et alors, de quoi s\u0027agit-il exactement et o\u00f9 dans le quartier Est ? Merci.\nSpeaker A: Alors que Mme Carr\u00e9 avait la gentillesse de vouloir me souffler la r\u00e9ponse, je vais lui proposer d\u0027expliquer cela avec le micro.\nSpeaker C: Bonjour, chers coll\u00e8gues. En fait, il s\u0027agit d\u0027un projet du budget participatif. Donc il y avait eu des candidatures et apr\u00e8s, on a fait quand m\u00eame un appel d\u0027offres pour s\u00e9lectionner l\u0027oeuvre. Du coup, cette \u0153uvre sera pos\u00e9e \u00e0 l\u0027entr\u00e9e de la fontaine de l\u0027\u00e9tuv\u00e9e, puisqu\u0027on a pos\u00e9 le socle quand on a fait tout le travail de r\u00e9habilitation de ce site. Mais par contre, la culture a effectivement \u00e9t\u00e9 associ\u00e9e dans le cadre de ce projet. Peut-\u00eatre que William peut compl\u00e9ter.\nSpeaker D: Oui, la direction de la culture a effectivement \u00e9t\u00e9 associ\u00e9e sur le choix de l\u0027artiste et de l\u0027oeuvre, ainsi que sur des conseils pratico-pratiques pour pouvoir installer cette oeuvre dans de bonnes conditions. Voil\u00e0. Mais c\u0027est pour \u00e7a que \u00e7a n\u0027a pas pass\u00e9 en commission de culture, c\u0027est parce que c\u0027\u00e9tait un projet de proximit\u00e9.\nSpeaker A: Voil\u00e0. Merci pour ces pr\u00e9cisions. Donc, s\u0027il n\u0027y a pas d\u0027autres remarques, y a-t-il des abstentions, des oppositions ? Il n\u0027y en a pas. Avant d\u0027en venir aux communications, je vais vous donner lecture des remerciements que nous avons re\u00e7us, comme \u00e0 l\u0027accoutum\u00e9e. Monsieur le Pr\u00e9sident de l\u0027Union nationale des parachutistes.",
+      "transcription_status": "completed",
+      "updated_at": null,
+      "user_id": "99dfd97f-a65a-4881-b917-318254285727"
+    }
+  ]
+}</pre>
+            </div>
+            
+            
+        </div>
+        
+        <div class="test-result success">
+            <h3>Upload d'un fichier audio (endpoint simplifié)</h3>
+            <p>Statut: Ru00e9ussi</p>
+            <p>Heure: 2025-05-20 12:48:21</p>
+            
+            <div class="details">
+                <h4>Ru00e9ponse:</h4>
+                <pre>{
+  "created_at": "2025-05-20T10:48:19.559849",
+  "duration_seconds": null,
+  "file_url": "/uploads/99dfd97f-a65a-4881-b917-318254285727/20250520_124819_test_audio.mp3",
+  "id": "cf1c9e1e-4601-445b-a4bc-612688f37866",
+  "metadata": null,
+  "speakers_count": null,
+  "summary_status": null,
+  "summary_text": null,
+  "title": "test_audio.mp3",
+  "transcript_id": null,
+  "transcript_metadata": null,
+  "transcript_status": "processing",
+  "transcript_text": null,
+  "updated_at": null,
+  "user_id": "99dfd97f-a65a-4881-b917-318254285727"
+}</pre>
+            </div>
+            
+            
+        </div>
+        
+        <div class="test-result success">
+            <h3>Récupération d'une réunion par ID (cf1c9e1e-4601-445b-a4bc-612688f37866) (endpoint simplifié)</h3>
+            <p>Statut: Ru00e9ussi</p>
+            <p>Heure: 2025-05-20 12:48:21</p>
+            
+            <div class="details">
+                <h4>Ru00e9ponse:</h4>
+                <pre>{
+  "created_at": "2025-05-20T10:48:19.559849",
+  "deleted": false,
+  "duration_seconds": null,
+  "file_url": "/uploads/99dfd97f-a65a-4881-b917-318254285727/20250520_124819_test_audio.mp3",
+  "id": "cf1c9e1e-4601-445b-a4bc-612688f37866",
+  "metadata": null,
+  "speakers_count": null,
+  "status": "success",
+  "success": true,
+  "summary_status": null,
+  "summary_text": null,
+  "title": "test_audio.mp3",
+  "transcript_id": "98aed7b8-b3b6-44f6-b186-ae4c8a90ffc6",
+  "transcript_metadata": null,
+  "transcript_status": "error",
+  "transcript_text": "Erreur lors de la transcription: Transcoding failed. File does not appear to contain audio. File type is text/html (HTML document, ASCII text, with very long lines (2233)).",
+  "transcription_status": "processing",
+  "updated_at": null,
+  "user_id": "99dfd97f-a65a-4881-b917-318254285727"
+}</pre>
+            </div>
+            
+            
+        </div>
+        
+        <div class="test-result success">
+            <h3>Récupération du statut de transcription</h3>
+            <p>Statut: Ru00e9ussi</p>
+            <p>Heure: 2025-05-20 12:48:21</p>
+            
+            <div class="details">
+                <h4>Ru00e9ponse:</h4>
+                <pre>{
+  "created_at": "2025-05-20T10:48:19.559849",
+  "duration_seconds": null,
+  "file_url": "/uploads/99dfd97f-a65a-4881-b917-318254285727/20250520_124819_test_audio.mp3",
+  "id": "cf1c9e1e-4601-445b-a4bc-612688f37866",
+  "metadata": null,
+  "speakers_count": null,
+  "summary_status": null,
+  "summary_text": null,
+  "title": "test_audio.mp3",
+  "transcript_id": "98aed7b8-b3b6-44f6-b186-ae4c8a90ffc6",
+  "transcript_metadata": null,
+  "transcript_status": "error",
+  "transcript_text": "Erreur lors de la transcription: Transcoding failed. File does not appear to contain audio. File type is text/html (HTML document, ASCII text, with very long lines (2233)).",
+  "transcription_status": "error",
+  "updated_at": null,
+  "user_id": "99dfd97f-a65a-4881-b917-318254285727"
+}</pre>
+            </div>
+            
+            
+        </div>
+        
+        <div class="test-result success">
+            <h3>Récupération de la transcription</h3>
+            <p>Statut: Ru00e9ussi</p>
+            <p>Heure: 2025-05-20 12:48:21</p>
+            
+            <div class="details">
+                <h4>Ru00e9ponse:</h4>
+                <pre>{
+  "status": "error"
+}</pre>
+            </div>
+            
+            
+        </div>
+        
+        <div class="test-result success">
+            <h3>Récupération du résumé de la réunion</h3>
+            <p>Statut: Ru00e9ussi</p>
+            <p>Heure: 2025-05-20 12:48:21</p>
+            
+            <div class="details">
+                <h4>Ru00e9ponse:</h4>
+                <pre>{
+  "meeting_id": "cf1c9e1e-4601-445b-a4bc-612688f37866",
+  "summary_status": null,
+  "summary_text": null
+}</pre>
+            </div>
+            
+            
+        </div>
+        
+    </body>
+    </html>
+    

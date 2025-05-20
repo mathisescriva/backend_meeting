@@ -7,7 +7,7 @@ class MeetingBase(BaseModel):
     file_url: str
 
 class MeetingCreate(MeetingBase):
-    pass
+    client_id: Optional[str] = None
 
 class MeetingUpdate(BaseModel):
     title: Optional[str] = None
@@ -17,6 +17,7 @@ class MeetingUpdate(BaseModel):
     speakers_count: Optional[int] = None
     summary_text: Optional[str] = None
     summary_status: Optional[str] = None
+    client_id: Optional[str] = None
 
 class Meeting(MeetingBase):
     id: str

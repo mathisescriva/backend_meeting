@@ -1,0 +1,13 @@
+# Configuration pour PostgreSQL
+DATABASE_URL=postgresql://mathisescriva:@localhost:5432/meeting_transcriber
+POSTGRES_USER=mathisescriva
+POSTGRES_PASSWORD=
+POSTGRES_SERVER=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=meeting_transcriber
+
+# Autres variables d'environnement existantes
+JWT_SECRET=super-secret-key-deve-only
+ASSEMBLYAI_API_KEY=3419005ee6924e08a14235043cabcd4e
+MISTRAL_API_KEY=9ks6u5CPMf4Htc8sp5WV194yV68QMKoE
+ENVIRONMENT=production
