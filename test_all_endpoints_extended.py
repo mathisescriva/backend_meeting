@@ -426,6 +426,76 @@ def test_get_summary(token, meeting_id):
         record_test_result("Récupération du résumé de la réunion", False, error=str(e))
         return None
 
+# ===== TESTS DE GÉNÉRATION DE COMPTES RENDUS =====
+
+def test_generate_summary(token, meeting_id):
+    """Test de génération du compte rendu d'une réunion avec Mistral"""
+    test_name = f"Génération du compte rendu (Meeting ID: {meeting_id})"
+    log(f"\n===== TEST DE GÉNÉRATION DU COMPTE RENDU (ID: {meeting_id}) =====")
+    
+    url = f"{BASE_URL}/meetings/{meeting_id}/generate-summary"
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    try:
+        response = requests.post(url, headers=headers)
+        response_data = response.json()
+        
+        log(f"Status code: {response.status_code}")
+        log(f"Response: {json.dumps(response_data, indent=2)}")
+        
+        success = response.status_code == 200 and response_data.get("success", False)
+        record_test_result(test_name, success, response_data)
+        
+        if success:
+            log("Génération du compte rendu démarrée avec succès", "SUCCESS")
+            return response_data
+        else:
+            log("Échec du démarrage de la génération du compte rendu", "ERROR")
+            return None
+    except Exception as e:
+        error_msg = f"Erreur lors de la génération du compte rendu: {str(e)}"
+        log(error_msg, "ERROR")
+        record_test_result(test_name, False, error=error_msg)
+        return None
+
+def test_wait_for_summary_completion(token, meeting_id, max_checks=10, interval=5):
+    """Attendre que le compte rendu soit généré"""
+    test_name = f"Attente de la fin de génération du compte rendu (Meeting ID: {meeting_id})"
+    log(f"\n===== ATTENTE DE LA FIN DE GÉNÉRATION DU COMPTE RENDU (ID: {meeting_id}) =====")
+    
+    url = f"{BASE_URL}/meetings/{meeting_id}/summary"
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    for i in range(max_checks):
+        try:
+            log(f"Vérification {i+1}/{max_checks}...")
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                status = response_data.get("summary_status")
+                log(f"Statut actuel: {status}")
+                
+                if status == "completed":
+                    log("Compte rendu généré avec succès", "SUCCESS")
+                    record_test_result(test_name, True, response_data)
+                    return response_data
+                elif status == "error":
+                    log("Erreur lors de la génération du compte rendu", "ERROR")
+                    record_test_result(test_name, False, response_data)
+                    return response_data
+            
+            if i < max_checks - 1:
+                log(f"Attente de {interval} secondes avant la prochaine vérification...")
+                time.sleep(interval)
+        except Exception as e:
+            error_msg = f"Erreur lors de la vérification du statut: {str(e)}"
+            log(error_msg, "ERROR")
+    
+    log("Délai d'attente dépassé pour la génération du compte rendu", "WARNING")
+    record_test_result(test_name, False, error="Timeout")
+    return None
+
 # ===== TESTS DE SANTÉ =====
 
 def test_health_check():
@@ -516,8 +586,23 @@ def run_all_tests():
         # Test de récupération de la transcription complète
         test_get_transcript(token, meeting_id)
         
-        # Test de récupération du résumé (peut échouer si la transcription n'est pas terminée)
-        test_get_summary(token, meeting_id)
+        # Test de récupération du résumé existant (peut échouer si la transcription n'est pas terminée)
+        summary_result = test_get_summary(token, meeting_id)
+        
+        # Test de génération de compte rendu avec Mistral
+        if summary_result and summary_result.get("summary_status") != "completed":
+            log("Test de génération de compte rendu avec Mistral", "INFO")
+            # Vérifier que la transcription est complète avant de générer un compte rendu
+            meeting_details = test_get_meeting_by_id(token, meeting_id)
+            if meeting_details and meeting_details.get("transcript_status") == "completed":
+                # Générer le compte rendu
+                generation_result = test_generate_summary(token, meeting_id)
+                if generation_result:
+                    # Attendre que le compte rendu soit généré
+                    summary = test_wait_for_summary_completion(token, meeting_id)
+            else:
+                log("La transcription n'est pas terminée, impossible de tester la génération du compte rendu", "WARNING")
+                test_stats["skipped"] += 2  # generate_summary, wait_for_summary_completion
     else:
         log("Aucune réunion disponible pour les tests. Skipping meeting-specific tests.", "WARNING")
         test_stats["skipped"] += 4  # get_meeting_by_id, transcription_status, transcript, summary

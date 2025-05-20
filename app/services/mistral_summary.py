@@ -1,9 +1,9 @@
-import requests
 import json
 import logging
 import os
 from typing import Optional, Dict, Any
 from ..core.config import settings
+import requests
 
 # Configuration pour Mistral AI
 MISTRAL_API_KEY = settings.MISTRAL_API_KEY
@@ -29,9 +29,11 @@ def generate_meeting_summary(transcript_text: str, meeting_title: Optional[str] 
         
     try:
         # Préparer le prompt pour Mistral
+        title_part = f" intitulée '{meeting_title}'" if meeting_title else ""
+        
         prompt = f"""Tu es un assistant spécialisé dans la création de comptes rendus de réunion.
         
-        Voici la transcription d'une réunion{' intitulée "' + meeting_title + '"' if meeting_title else ''}. 
+        Voici la transcription d'une réunion{title_part}.
         Crée un compte rendu structuré STRICTEMENT selon les 4 parties suivantes :
         
         # Synthèse
@@ -78,7 +80,7 @@ def generate_meeting_summary(transcript_text: str, meeting_title: Optional[str] 
             summary = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
             
             if summary:
-                logger.info("Compte rendu généré avec succès")
+                logger.info("Compte rendu généré avec succès par l'API Mistral")
                 return summary
             else:
                 logger.error("La réponse de l'API Mistral ne contient pas de contenu")

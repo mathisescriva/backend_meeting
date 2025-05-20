@@ -345,6 +345,90 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 }
 ```
 
+## Gu00e9nu00e9ration de comptes rendus avec Mistral
+
+Le backend intu00e8gre l'API Mistral pour gu00e9nu00e9rer des comptes rendus structuru00e9s des ru00e9unions u00e0 partir des transcriptions.
+
+### Configuration de Mistral
+
+La clu00e9 API Mistral doit u00eatre configuru00e9e dans le fichier `.env.local` :
+
+```
+MISTRAL_API_KEY=votre_clu00e9_api_mistral_ici
+```
+
+Vous pouvez obtenir une clu00e9 API sur [le site de Mistral](https://console.mistral.ai/).
+
+### Gu00e9nu00e9rer un compte rendu
+
+```
+POST /meetings/{meeting_id}/generate-summary
+```
+
+**En-tu00eates :**
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Paramu00e8tres de chemin :**
+- `meeting_id`: Identifiant unique de la ru00e9union
+
+**Fonctionnement :**
+1. L'API vu00e9rifie que la transcription est complu00e8te
+2. Une demande de gu00e9nu00e9ration de compte rendu est envoyu00e9e u00e0 l'API Mistral
+3. Le statut du compte rendu est mis u00e0 jour dans la base de donnu00e9es ("processing")
+4. La gu00e9nu00e9ration se poursuit en arriu00e8re-plan
+
+**Ru00e9ponse :**
+```json
+{
+  "message": "Gu00e9nu00e9ration du compte rendu en cours",
+  "meeting": {
+    "id": "e0ee6308-5ac1-4abf-9c5d-5a754141ec39",
+    "user_id": "99dfd97f-a65a-4881-b917-318254285727",
+    "title": "audio_3h.mp3",
+    "summary_status": "processing"
+  },
+  "success": true
+}
+```
+
+### Ru00e9cupu00e9rer un compte rendu
+
+```
+GET /meetings/{meeting_id}/summary
+```
+
+**En-tu00eates :**
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Paramu00e8tres de chemin :**
+- `meeting_id`: Identifiant unique de la ru00e9union
+
+**Ru00e9ponse :**
+```json
+{
+  "id": "e0ee6308-5ac1-4abf-9c5d-5a754141ec39",
+  "title": "audio_3h.mp3",
+  "summary_status": "completed",
+  "summary_text": "# Synthu00e8se\nLa ru00e9union intitulu00e9e 'audio_3h.mp3' a abordu00e9 plusieurs points clu00e9s concernant la politique culturelle de la ville d'Orlu00e9ans...\n\n# u00c9lu00e9ments discuts\n- **Investissements culturels** : Discussion sur les investissements significatifs...\n\n# Relevu00e9 de du00e9cisions\n- **Approbation des du00e9libu00e9rations** : Plusieurs du00e9libu00e9rations ont u00e9tu00e9 approuvu00e9es...\n\n# Plan d'action\n- **Investissements culturels** : Poursuite des investissements dans les projets culturels majeurs...",
+  "success": true
+}
+```
+
+### Format du compte rendu
+
+Le compte rendu gu00e9nu00e9ru00e9 par Mistral est structuru00e9 en quatre sections :
+
+1. **Synthu00e8se** : Ru00e9sumu00e9 global de la ru00e9union
+2. **u00c9lu00e9ments discuts** : Points principaux abordu00e9s lors de la ru00e9union
+3. **Relevu00e9 de du00e9cisions** : Du00e9cisions prises pendant la ru00e9union
+4. **Plan d'action** : Actions u00e0 entreprendre suite u00e0 la ru00e9union
+
+Le format est en Markdown, ce qui permet un affichage structuru00e9 et formattu00e9 dans l'interface utilisateur.
+
 ## Gestion du profil utilisateur
 
 ### Obtenir les informations de profil
