@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.openapi.utils import get_openapi
 from .routes import auth, meetings, profile, simple_meetings, clients, admin
 from .core.config import settings
