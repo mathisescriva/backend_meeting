@@ -12,29 +12,50 @@ logging.basicConfig(level=logging.INFO,
 
 # Chemins
 CURRENT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-SOURCE_DB_PATH = CURRENT_DIR / "app.db"
 RENDER_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "/data")
+
+# Sur Render, le chemin peut u00eatre diffu00e9rent
+POSSIBLE_SOURCE_PATHS = [
+    CURRENT_DIR / "app.db",  # Chemin relatif standard
+    Path("/opt/render/project/src/app.db"),  # Chemin absolu sur Render
+    Path("app.db")  # Fichier dans le ru00e9pertoire courant
+]
+
+# Trouver le premier chemin qui existe
+SOURCE_DB_PATH = None
+for path in POSSIBLE_SOURCE_PATHS:
+    if os.path.exists(path):
+        SOURCE_DB_PATH = path
+        break
+
 TARGET_DB_PATH = Path(RENDER_DISK_PATH) / "app.db"
 
 def migrate_database():
-    """Migre la base de donnu00e9es du chemin actuel vers le disque persistant"""
+    """Migre la base de données du chemin actuel vers le disque persistant"""
     
-    # Vu00e9rifier si le ru00e9pertoire de destination existe
+    # Vérifier si le répertoire de destination existe
     if not os.path.exists(RENDER_DISK_PATH):
-        logging.error(f"Le ru00e9pertoire de destination {RENDER_DISK_PATH} n'existe pas.")
-        logging.info("Cette erreur est normale en local. Sur Render, vu00e9rifiez que le disque est correctement montu00e9.")
+        logging.error(f"Le répertoire de destination {RENDER_DISK_PATH} n'existe pas.")
+        logging.info("Cette erreur est normale en local. Sur Render, vérifiez que le disque est correctement monté.")
         return False
         
-    # Vu00e9rifier si la BDD source existe
-    if not os.path.exists(SOURCE_DB_PATH):
-        logging.error(f"La base de donnu00e9es source {SOURCE_DB_PATH} n'existe pas.")
-        return False
+    # Vérifier si la BDD source existe
+    if SOURCE_DB_PATH is None:
+        logging.error("Aucune base de données source n'a été trouvée.")
+        
+        # Vérifier si la base de données cible existe déjà
+        if os.path.exists(TARGET_DB_PATH):
+            logging.info(f"La base de données cible {TARGET_DB_PATH} existe déjà, aucune migration nécessaire.")
+            return True
+        else:
+            logging.error("Aucune base de données source ou cible n'a été trouvée.")
+            return False
     
-    # Vu00e9rifier si la BDD destination existe du00e9ju00e0
+    # Vérifier si la BDD destination existe déjà
     if os.path.exists(TARGET_DB_PATH):
-        logging.warning(f"La base de donnu00e9es cible {TARGET_DB_PATH} existe du00e9ju00e0.")
+        logging.warning(f"La base de données cible {TARGET_DB_PATH} existe déjà.")
         backup_path = TARGET_DB_PATH.with_suffix(".db.backup")
-        logging.info(f"Cru00e9ation d'une sauvegarde u00e0 {backup_path}")
+        logging.info(f"Création d'une sauvegarde à {backup_path}")
         shutil.copy2(TARGET_DB_PATH, backup_path)
     
     try:

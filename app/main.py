@@ -1,13 +1,13 @@
-from fastapi import FastAPI, Request, status, HTTPException
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import FastAPI, Request, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.openapi.utils import get_openapi
 from .routes import auth, meetings, profile, simple_meetings, clients, admin
 from .core.config import settings
 from .core.security import get_current_user
-from fastapi.openapi.utils import get_openapi
 import time
 import logging
+import os
 from contextlib import asynccontextmanager
 from .services.queue_processor import start_queue_processor, stop_queue_processor
 
@@ -136,7 +136,23 @@ app.include_router(simple_meetings.router, prefix="")
 app.include_router(admin.router, prefix="")
 
 # Montage des répertoires de fichiers statiques
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+# Utiliser le disque persistant de Render si disponible
+import os
+
+# Déterminer le chemin du répertoire uploads
+RENDER_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "/data")
+IS_ON_RENDER = os.path.exists(RENDER_DISK_PATH)
+
+if IS_ON_RENDER:
+    uploads_directory = os.path.join(RENDER_DISK_PATH, "uploads")
+    # Créer le répertoire s'il n'existe pas
+    os.makedirs(uploads_directory, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=uploads_directory), name="uploads")
+    logging.info(f"Fichiers statiques montés depuis {uploads_directory}")
+else:
+    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+    logging.info("Fichiers statiques montés depuis le répertoire local 'uploads'")
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Personnalisation de OpenAPI
