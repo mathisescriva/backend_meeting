@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from .routes import auth, meetings, profile, simple_meetings, clients
+from .routes import auth, meetings, profile, simple_meetings, clients, admin
 from .core.config import settings
 from .core.security import get_current_user
 from fastapi.openapi.utils import get_openapi
@@ -133,6 +133,7 @@ app.include_router(meetings.router, prefix="")
 app.include_router(profile.router, prefix="")
 app.include_router(clients.router, prefix="")
 app.include_router(simple_meetings.router, prefix="")
+app.include_router(admin.router, prefix="")
 
 # Montage des répertoires de fichiers statiques
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
