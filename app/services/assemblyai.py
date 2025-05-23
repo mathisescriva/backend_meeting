@@ -448,18 +448,13 @@ def process_completed_transcript(meeting_id, user_id, transcript):
         update_meeting(meeting_id, user_id, update_data)
         logger.info(f"Transcription terminée avec succès pour {meeting_id}")
         
-        # Lancer la génération du résumé automatiquement
+        # Lancer la génération du résumé automatiquement en mode asynchrone
         try:
             from .mistral_summary import process_meeting_summary
             logger.info(f"Lancement de la génération du résumé pour la réunion {meeting_id}")
-            import threading
-            summary_thread = threading.Thread(
-                target=process_meeting_summary,
-                args=(meeting_id, user_id)
-            )
-            summary_thread.daemon = True
-            summary_thread.start()
-            logger.info(f"Thread de génération du résumé lancé pour la réunion {meeting_id}")
+            # Utiliser le mode asynchrone pour éviter les problèmes de threads sur Render
+            process_meeting_summary(meeting_id, user_id, async_mode=True)
+            logger.info(f"Génération du résumé lancée en mode asynchrone pour la réunion {meeting_id}")
         except Exception as summary_error:
             logger.error(f"Erreur lors du lancement de la génération du résumé: {str(summary_error)}")
     except Exception as e:

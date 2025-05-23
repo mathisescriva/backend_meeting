@@ -260,8 +260,8 @@ async def generate_meeting_summary_route(
         # Mettre à jour le statut pour indiquer que la génération est en cours
         update_meeting(meeting_id, current_user["id"], {"summary_status": "processing"})
         
-        # Lancer le processus de génération du compte rendu
-        process_meeting_summary(meeting_id, current_user["id"])
+        # Lancer le processus de génération du compte rendu en mode asynchrone
+        process_meeting_summary(meeting_id, current_user["id"], async_mode=True)
         
         # Récupérer la réunion mise à jour
         updated_meeting = get_meeting(meeting_id, current_user["id"])

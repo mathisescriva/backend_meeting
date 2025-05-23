@@ -192,7 +192,7 @@ Voici la transcription d'une réunion{title_part} :
         logger.error(f"Erreur lors de la génération du compte rendu: {str(e)}")
         return None
 
-def process_meeting_summary(meeting_id: str, user_id: str, client_id: Optional[str] = None):
+def process_meeting_summary(meeting_id: str, user_id: str, client_id: Optional[str] = None, async_mode: bool = False):
     """
     Traite la génération du compte rendu pour une réunion spécifique.
     
@@ -202,12 +202,14 @@ def process_meeting_summary(meeting_id: str, user_id: str, client_id: Optional[s
         meeting_id: Identifiant de la réunion
         user_id: Identifiant de l'utilisateur
         client_id: Identifiant du client pour personnaliser le résumé (optionnel)
+        async_mode: Si True, retourne immédiatement après avoir mis à jour le statut (pour API)
     
     Returns:
         bool: True si le traitement a réussi, False sinon
     """
     from ..db.queries import get_meeting, update_meeting
-    import threading
+    import os
+    from pathlib import Path
     
     try:
         # Récupérer les informations de la réunion
@@ -233,110 +235,82 @@ def process_meeting_summary(meeting_id: str, user_id: str, client_id: Optional[s
             update_data["client_id"] = client_id
         update_meeting(meeting_id, user_id, update_data)
         
-        # Stocker les données nécessaires pour le thread
+        # Si mode asynchrone, retourner immédiatement après avoir mis à jour le statut
+        if async_mode:
+            # Lancer le processus en arrière-plan via le script update_summary_status.py
+            import subprocess
+            import sys
+            
+            # Chemin du script
+            script_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "update_summary_status.py"
+            
+            if os.path.exists(script_path):
+                # Lancer le script en arrière-plan
+                subprocess.Popen(
+                    [sys.executable, str(script_path)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                logger.info(f"Script de mise à jour des comptes rendus lancé en arrière-plan pour la réunion {meeting_id}")
+            else:
+                logger.warning(f"Script de mise à jour des comptes rendus non trouvé: {script_path}")
+            
+            return True
+        
+        # Sinon, générer directement le compte rendu
         transcript_text = meeting["transcript_text"]
         meeting_title = meeting.get("title")
         
-        # Lancer la génération dans un thread séparé pour ne pas bloquer
-        def generate_summary_thread():
+        # Générer le compte rendu
+        logger.info(f"Génération directe du compte rendu pour la réunion {meeting_id}")
+        summary = generate_meeting_summary(transcript_text, meeting_title, client_id, user_id)
+        
+        if summary:
+            # Déterminer le chemin de la base de données (prendre en compte Render)
+            RENDER_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "/data")
+            ON_RENDER = os.path.exists(RENDER_DISK_PATH)
+            
+            if ON_RENDER:
+                db_path = Path(RENDER_DISK_PATH) / "app.db"
+                logger.info(f"Utilisation de la base de données sur le disque persistant: {db_path}")
+            else:
+                db_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
+                logger.info(f"Utilisation de la base de données locale: {db_path}")
+            
+            # Mise à jour directe de la base de données
+            import sqlite3
+            
+            # Créer une nouvelle connexion
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+            
             try:
-                # Générer le compte rendu avec le paramètre client_id
-                summary = generate_meeting_summary(transcript_text, meeting_title, client_id, user_id)
-                
-                if summary:
-                    # Mise à jour directe de la base de données en utilisant sqlite3
-                    # plutôt que d'utiliser la fonction update_meeting qui utilise le pool de connexions global
-                    import sqlite3
-                    import os
-                    from pathlib import Path
-                    
-                    # Chemin de la base de données
-                    db_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
-                    
-                    # Créer une nouvelle connexion dans ce thread
-                    conn = sqlite3.connect(str(db_path))
-                    cursor = conn.cursor()
-                    
-                    try:
-                        # Mettre à jour la réunion avec le compte rendu
-                        cursor.execute(
-                            "UPDATE meetings SET summary_text = ?, summary_status = ? WHERE id = ? AND user_id = ?",
-                            (summary, "completed", meeting_id, user_id)
-                        )
-                        conn.commit()
-                        logger.info(f"Compte rendu généré et enregistré pour la réunion {meeting_id}")
-                    except Exception as db_error:
-                        logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
-                        return False
-                    finally:
-                        # Fermer la connexion
-                        cursor.close()
-                        conn.close()
-                    
-                    return True
-                else:
-                    # Mise à jour directe de la base de données en cas d'erreur
-                    import sqlite3
-                    import os
-                    from pathlib import Path
-                    
-                    # Chemin de la base de données
-                    db_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
-                    
-                    # Créer une nouvelle connexion dans ce thread
-                    conn = sqlite3.connect(str(db_path))
-                    cursor = conn.cursor()
-                    
-                    try:
-                        # Mettre à jour le statut en cas d'erreur
-                        cursor.execute(
-                            "UPDATE meetings SET summary_text = ?, summary_status = ? WHERE id = ? AND user_id = ?",
-                            ("Erreur lors de la génération du compte rendu", "error", meeting_id, user_id)
-                        )
-                        conn.commit()
-                    except Exception as db_error:
-                        logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
-                    finally:
-                        # Fermer la connexion
-                        cursor.close()
-                        conn.close()
-                    
-                    logger.error(f"Échec de la génération du compte rendu pour la réunion {meeting_id}")
-                    return False
-            except Exception as e:
-                logger.error(f"Erreur dans le thread de génération du compte rendu: {str(e)}")
-                
-                # Mise à jour directe de la base de données en cas d'erreur
-                try:
-                    import sqlite3
-                    import os
-                    from pathlib import Path
-                    
-                    # Chemin de la base de données
-                    db_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
-                    
-                    # Créer une nouvelle connexion dans ce thread
-                    conn = sqlite3.connect(str(db_path))
-                    cursor = conn.cursor()
-                    
-                    # Mettre à jour le statut en cas d'erreur
-                    cursor.execute(
-                        "UPDATE meetings SET summary_text = ?, summary_status = ? WHERE id = ? AND user_id = ?",
-                        (f"Erreur lors de la génération du compte rendu: {str(e)}", "error", meeting_id, user_id)
-                    )
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
-                except Exception as db_error:
-                    logger.error(f"Erreur lors de la mise à jour de la base de données dans le thread: {str(db_error)}")
+                # Mettre à jour la réunion avec le compte rendu
+                cursor.execute(
+                    "UPDATE meetings SET summary_text = ?, summary_status = ? WHERE id = ? AND user_id = ?",
+                    (summary, "completed", meeting_id, user_id)
+                )
+                conn.commit()
+                logger.info(f"Compte rendu généré et enregistré pour la réunion {meeting_id}")
+            except Exception as db_error:
+                logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
                 return False
-        
-        # Démarrer le thread
-        thread = threading.Thread(target=generate_summary_thread)
-        thread.daemon = False
-        thread.start()
-        
-        return True
+            finally:
+                # Fermer la connexion
+                cursor.close()
+                conn.close()
+            
+            return True
+        else:
+            # Mise à jour en cas d'erreur
+            update_meeting(meeting_id, user_id, {
+                "summary_status": "error",
+                "summary_text": "Erreur lors de la génération du compte rendu"
+            })
+            
+            logger.error(f"Échec de la génération du compte rendu pour la réunion {meeting_id}")
+            return False
         
     except Exception as e:
         logger.error(f"Erreur lors du traitement du compte rendu: {str(e)}")
