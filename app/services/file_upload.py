@@ -17,12 +17,24 @@ logger.setLevel(logging.INFO)
 # Obtenir le chemin de base du projet
 BASE_DIR = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-# Dossier des uploads
-UPLOADS_DIR = BASE_DIR / "uploads"
+# Vérifier si nous sommes sur Render (disque persistant existe)
+RENDER_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "/data")
+ON_RENDER = os.path.exists(RENDER_DISK_PATH)
+
+# Dossier des uploads - utiliser le disque persistant sur Render
+if ON_RENDER:
+    logger.info(f"Utilisation du disque persistant Render pour les uploads: {RENDER_DISK_PATH}")
+    UPLOADS_DIR = Path(RENDER_DISK_PATH) / "uploads"
+else:
+    logger.info("Utilisation du dossier local pour les uploads")
+    UPLOADS_DIR = BASE_DIR / "uploads"
+
 PROFILE_PICTURES_DIR = UPLOADS_DIR / "profile_pictures"
 
 # S'assurer que les dossiers d'upload existent
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(PROFILE_PICTURES_DIR, exist_ok=True)
+logger.info(f"Dossier des photos de profil: {PROFILE_PICTURES_DIR}")
 
 def validate_image_file(file: UploadFile):
     """

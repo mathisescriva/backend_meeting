@@ -3,6 +3,8 @@ import os
 import shutil
 from pathlib import Path
 import logging
+import subprocess
+import sys
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO, 
@@ -55,15 +57,55 @@ def migrate_database():
         logging.error(f"Erreur lors de la migration: {str(e)}")
         return False
 
+def migrate_profile_pictures():
+    """Migre les photos de profil vers le disque persistant en appelant le script dédié"""
+    try:
+        # Chemin du script de migration des photos de profil
+        script_path = CURRENT_DIR / "migrate_profile_pictures.py"
+        
+        if not os.path.exists(script_path):
+            logging.error(f"Le script de migration des photos de profil {script_path} n'existe pas.")
+            return False
+            
+        # Exécuter le script de migration des photos de profil
+        logging.info(f"Exécution du script de migration des photos de profil: {script_path}")
+        result = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            logging.info("Migration des photos de profil réussie!")
+            logging.info(result.stdout)
+            return True
+        else:
+            logging.error(f"Erreur lors de la migration des photos de profil: {result.stderr}")
+            return False
+    except Exception as e:
+        logging.error(f"Erreur lors de l'exécution du script de migration des photos de profil: {str(e)}")
+        return False
+
 if __name__ == "__main__":
-    logging.info("Du00e9but de la migration de la base de donnu00e9es vers le disque persistant")
+    logging.info("Début de la migration des données vers le disque persistant")
     
-    # Afficher les chemins pour du00e9boguer
-    logging.info(f"Base de donnu00e9es source: {SOURCE_DB_PATH}")
+    # Afficher les chemins pour déboguer
+    logging.info(f"Base de données source: {SOURCE_DB_PATH}")
     logging.info(f"Disque persistant Render: {RENDER_DISK_PATH}")
-    logging.info(f"Base de donnu00e9es cible: {TARGET_DB_PATH}")
+    logging.info(f"Base de données cible: {TARGET_DB_PATH}")
     
-    if migrate_database():
-        logging.info("Migration terminu00e9e avec succu00e8s")
+    # Migrer la base de données
+    db_success = migrate_database()
+    if db_success:
+        logging.info("Migration de la base de données terminée avec succès")
     else:
-        logging.error("La migration a u00e9chouu00e9")
+        logging.error("La migration de la base de données a échoué")
+    
+    # Migrer les photos de profil
+    pics_success = migrate_profile_pictures()
+    if pics_success:
+        logging.info("Migration des photos de profil terminée avec succès")
+    else:
+        logging.error("La migration des photos de profil a échoué")
+        
+    # Résultat global
+    if db_success and pics_success:
+        logging.info("Migration complète terminée avec succès")
+    else:
+        logging.error("La migration complète a échoué")
