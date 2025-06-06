@@ -358,3 +358,167 @@ def get_meetings_by_status(status, max_age_hours=72):
         return []
     finally:
         release_db_connection(conn)
+
+def get_meetings_by_status(status, max_age_hours=72):
+    """
+    Récupère les réunions avec un statut spécifique qui ne sont pas trop anciennes
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Calculer la date de début pour le filtrage (maintenant - max_age_hours)
+        max_age_date = (datetime.utcnow().replace(microsecond=0) - 
+                       datetime.timedelta(hours=max_age_hours)).isoformat()
+        
+        # Récupérer toutes les réunions correspondant au statut et pas trop anciennes
+        cursor.execute(
+            """SELECT * FROM meetings 
+               WHERE transcript_status = ? 
+               AND created_at > ?
+               ORDER BY created_at DESC""", 
+            (status, max_age_date)
+        )
+        
+        meetings = cursor.fetchall()
+        
+        if meetings:
+            # Convertir les résultats en liste de dictionnaires
+            return [dict(meeting) for meeting in meetings]
+        return []
+    
+    except sqlite3.Error as e:
+        logging.error(f"Erreur SQLite lors de la récupération des réunions par statut: {str(e)}")
+        return []
+    finally:
+        release_db_connection(conn)
+
+
+def get_meeting_speakers(meeting_id, user_id):
+    """Récupère tous les noms personnalisés des locuteurs pour une réunion spécifique"""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Vérifier d'abord que la réunion appartient à l'utilisateur
+        cursor.execute(
+            "SELECT id FROM meetings WHERE id = ? AND user_id = ?",
+            (meeting_id, user_id)
+        )
+        if not cursor.fetchone():
+            return None
+        
+        # Récupérer les noms personnalisés des locuteurs
+        cursor.execute(
+            "SELECT * FROM meeting_speakers WHERE meeting_id = ? ORDER BY speaker_id",
+            (meeting_id,)
+        )
+        
+        speakers = cursor.fetchall()
+        if speakers:
+            return [dict(speaker) for speaker in speakers]
+        return []
+    
+    except sqlite3.Error as e:
+        logging.error(f"Erreur lors de la récupération des locuteurs personnalisés: {str(e)}")
+        return None
+    finally:
+        release_db_connection(conn)
+
+
+def set_meeting_speaker(meeting_id, user_id, speaker_id, custom_name):
+    """Définit ou met à jour un nom personnalisé pour un locuteur dans une réunion"""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Vérifier d'abord que la réunion appartient à l'utilisateur
+        cursor.execute(
+            "SELECT id FROM meetings WHERE id = ? AND user_id = ?",
+            (meeting_id, user_id)
+        )
+        if not cursor.fetchone():
+            return False
+        
+        # Vérifier si une entrée existe déjà pour ce locuteur dans cette réunion
+        cursor.execute(
+            "SELECT id FROM meeting_speakers WHERE meeting_id = ? AND speaker_id = ?",
+            (meeting_id, speaker_id)
+        )
+        existing_entry = cursor.fetchone()
+        
+        if existing_entry:
+            # Mettre à jour l'entrée existante
+            cursor.execute(
+                "UPDATE meeting_speakers SET custom_name = ? WHERE id = ?",
+                (custom_name, existing_entry["id"])
+            )
+        else:
+            # Créer une nouvelle entrée
+            speaker_mapping_id = str(uuid.uuid4())
+            cursor.execute(
+                "INSERT INTO meeting_speakers (id, meeting_id, speaker_id, custom_name) VALUES (?, ?, ?, ?)",
+                (speaker_mapping_id, meeting_id, speaker_id, custom_name)
+            )
+        
+        conn.commit()
+        return True
+    
+    except sqlite3.Error as e:
+        logging.error(f"Erreur lors de la définition du nom personnalisé du locuteur: {str(e)}")
+        conn.rollback()
+        return False
+    finally:
+        release_db_connection(conn)
+
+
+def delete_meeting_speaker(meeting_id, user_id, speaker_id):
+    """Supprime un nom personnalisé de locuteur pour une réunion"""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Vérifier d'abord que la réunion appartient à l'utilisateur
+        cursor.execute(
+            "SELECT id FROM meetings WHERE id = ? AND user_id = ?",
+            (meeting_id, user_id)
+        )
+        if not cursor.fetchone():
+            return False
+        
+        # Supprimer l'entrée de locuteur personnalisé
+        cursor.execute(
+            "DELETE FROM meeting_speakers WHERE meeting_id = ? AND speaker_id = ?",
+            (meeting_id, speaker_id)
+        )
+        
+        conn.commit()
+        return True
+    
+    except sqlite3.Error as e:
+        logging.error(f"Erreur lors de la suppression du nom personnalisé du locuteur: {str(e)}")
+        conn.rollback()
+        return False
+    finally:
+        release_db_connection(conn)
+
+
+def get_custom_speaker_name(meeting_id, speaker_id):
+    """Récupère le nom personnalisé d'un locuteur spécifique pour une réunion"""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT custom_name FROM meeting_speakers WHERE meeting_id = ? AND speaker_id = ?",
+            (meeting_id, speaker_id)
+        )
+        
+        result = cursor.fetchone()
+        return result["custom_name"] if result else None
+    
+    except sqlite3.Error as e:
+        logging.error(f"Erreur lors de la récupération du nom personnalisé du locuteur: {str(e)}")
+        return None
+    finally:
+        release_db_connection(conn)

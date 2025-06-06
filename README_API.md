@@ -12,8 +12,9 @@ Ce document fournit une documentation complète des endpoints de l'API MeetingTr
 4. [Gestion des réunions - Endpoints simplifiés](#gestion-des-réunions---endpoints-simplifiés)
 5. [Gestion du profil utilisateur](#gestion-du-profil-utilisateur)
 6. [Gestion des clients et résumés personnalisés](#gestion-des-clients-et-résumés-personnalisés)
-7. [Exemples d'utilisation](#exemples-dutilisation)
-8. [Codes d'erreur](#codes-derreur)
+7. [Renommage des locuteurs dans les transcriptions](#renommage-des-locuteurs-dans-les-transcriptions)
+8. [Exemples d'utilisation](#exemples-dutilisation)
+9. [Codes d'erreur](#codes-derreur)
 
 ## Configuration et démarrage
 
@@ -498,6 +499,146 @@ Content-Type: application/json
 ```
 
 ### Télécharger une photo de profil
+## Renommage des locuteurs dans les transcriptions
+
+Cette API permet de personnaliser les noms des locuteurs identifiés dans les transcriptions. Par défaut, AssemblyAI identifie les locuteurs avec des labels génériques comme "Speaker A", "Speaker B", etc. Ces endpoints vous permettent de remplacer ces labels par des noms personnalisés.
+
+### Récupérer la liste des noms personnalisés
+
+```
+GET /meetings/{meeting_id}/speakers
+```
+
+**Description :** Récupère la liste de tous les noms personnalisés définis pour les locuteurs d'une réunion.
+
+**Paramètres URL :**
+- `meeting_id`: Identifiant unique de la réunion
+
+**En-têtes :**
+- `Authorization`: Bearer {token}
+
+**Réponse (200 OK) :**
+```json
+{
+  "speakers": [
+    {
+      "id": "3f7c8a96-e9f2-4b3d-8a5c-f56e98712e4b",
+      "meeting_id": "e3f24ba2-5efe-410f-9551-b1b84562f3fb",
+      "speaker_id": "A",
+      "custom_name": "Jean Dupont",
+      "created_at": "2025-06-06T14:25:30.123456"
+    },
+    {
+      "id": "8d2e4f1c-7b6a-9c3d-5e4f-2a1b8c7d6e5f",
+      "meeting_id": "e3f24ba2-5efe-410f-9551-b1b84562f3fb",
+      "speaker_id": "B",
+      "custom_name": "Marie Martin",
+      "created_at": "2025-06-06T14:26:15.789012"
+    }
+  ]
+}
+```
+
+### Créer ou mettre à jour un nom personnalisé
+
+```
+POST /meetings/{meeting_id}/speakers
+```
+
+**Description :** Crée ou met à jour le nom personnalisé d'un locuteur dans une réunion. Si un nom personnalisé existe déjà pour ce locuteur, il sera mis à jour.
+
+**Paramètres URL :**
+- `meeting_id`: Identifiant unique de la réunion
+
+**En-têtes :**
+- `Authorization`: Bearer {token}
+- `Content-Type`: application/json
+
+**Corps de la requête :**
+```json
+{
+  "speaker_id": "A",
+  "custom_name": "Jean Dupont"
+}
+```
+
+**Réponse (200 OK) :**
+```json
+{
+  "id": "3f7c8a96-e9f2-4b3d-8a5c-f56e98712e4b",
+  "meeting_id": "e3f24ba2-5efe-410f-9551-b1b84562f3fb",
+  "speaker_id": "A",
+  "custom_name": "Jean Dupont",
+  "created_at": "2025-06-06T14:25:30.123456"
+}
+```
+
+### Supprimer un nom personnalisé
+
+```
+DELETE /meetings/{meeting_id}/speakers/{speaker_id}
+```
+
+**Description :** Supprime le nom personnalisé d'un locuteur spécifique. Après suppression, le système reviendra à l'utilisation du label par défaut (ex: "Speaker A").
+
+**Paramètres URL :**
+- `meeting_id`: Identifiant unique de la réunion
+- `speaker_id`: Identifiant du locuteur (ex: "A", "B", "C", etc.)
+
+**En-têtes :**
+- `Authorization`: Bearer {token}
+
+**Réponse (200 OK) :**
+```json
+{
+  "success": true,
+  "message": "Nom personnalisé supprimé avec succès"
+}
+```
+
+### Mettre à jour la transcription avec les noms personnalisés
+
+```
+GET /meetings/{meeting_id}/speakers/update-transcript
+```
+
+**Description :** Régénère la transcription de la réunion en appliquant les noms personnalisés actuels et met à jour la transcription stockée dans la base de données.
+
+**Paramètres URL :**
+- `meeting_id`: Identifiant unique de la réunion
+
+**En-têtes :**
+- `Authorization`: Bearer {token}
+
+**Réponse (200 OK) :**
+```json
+{
+  "success": true,
+  "message": "Transcription mise à jour avec les noms personnalisés",
+  "transcript_text": "Jean Dupont: Bonjour à tous, bienvenue à cette réunion.\nMarie Martin: Merci de nous avoir tous réunis aujourd'hui.\n..."
+}
+```
+
+### Fonctionnement interne
+
+Le système gère les noms personnalisés des locuteurs de la manière suivante :
+
+1. Les noms personnalisés sont stockés dans la table `meeting_speakers` avec une association entre l'ID de la réunion, l'ID du locuteur (ex: "A", "B") et le nom personnalisé.
+
+2. Lorsque vous récupérez une transcription via l'API, le système vérifie automatiquement s'il existe des noms personnalisés pour cette réunion et les applique au formatage du texte.
+
+3. Si vous modifiez les noms personnalisés après avoir déjà consulté la transcription, vous devrez utiliser l'endpoint `update-transcript` pour régénérer la transcription avec les nouveaux noms.
+
+4. Les noms personnalisés n'affectent que l'affichage des transcriptions et ne modifient pas les données brutes de diarisation fournies par AssemblyAI.
+
+### Exemple d'utilisation
+
+Le workflow typique pour personnaliser les noms des locuteurs est le suivant :
+
+1. Obtenir une transcription et identifier les différents locuteurs (Speaker A, Speaker B, etc.)
+2. Utiliser l'endpoint `POST /meetings/{meeting_id}/speakers` pour attribuer des noms personnalisés à chaque locuteur
+3. Utiliser l'endpoint `GET /meetings/{meeting_id}/speakers/update-transcript` pour régénérer la transcription avec les noms personnalisés
+4. Récupérer la réunion mise à jour via les endpoints habituels
 ## Gestion des clients et résumés personnalisés
 
 Cette API permet de gérer des clients avec des templates de résumé personnalisés. Les réunions peuvent être associées à des clients spécifiques pour générer des comptes rendus personnalisés selon le format désiré par chaque client.

@@ -177,6 +177,22 @@ def init_db():
         # Création d'index pour la table clients
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_client_user ON clients(user_id)')
         
+        # Création de la table meeting_speakers pour les noms personnalisés des locuteurs
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS meeting_speakers (
+                id TEXT PRIMARY KEY,
+                meeting_id TEXT NOT NULL,
+                speaker_id TEXT NOT NULL,
+                custom_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE,
+                UNIQUE(meeting_id, speaker_id)
+            )
+        ''')
+        
+        # Création d'index pour la table meeting_speakers
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_speaker_meeting ON meeting_speakers(meeting_id)')
+        
         conn.commit()
         print("Database initialized successfully")
     finally:

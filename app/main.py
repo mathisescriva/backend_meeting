@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.openapi.utils import get_openapi
-from .routes import auth, meetings, profile, simple_meetings, clients, admin
+from .routes import auth, meetings, profile, simple_meetings, clients, admin, speakers
 from .core.config import settings
 from .core.security import get_current_user
 import time
@@ -135,6 +135,7 @@ app.include_router(profile.router, prefix="")
 app.include_router(clients.router, prefix="")
 app.include_router(simple_meetings.router, prefix="")
 app.include_router(admin.router, prefix="")
+app.include_router(speakers.router, prefix="")
 
 # Montage des répertoires de fichiers statiques
 # Utiliser le disque persistant de Render si disponible

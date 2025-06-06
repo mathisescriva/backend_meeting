@@ -47,7 +47,21 @@ def check_and_update_transcription(meeting: Dict[str, Any]) -> Dict[str, Any]:
         # Formater avec les locuteurs si disponibles
         if 'utterances' in transcript_data and transcript_data['utterances']:
             try:
-                transcript_text = format_transcript_text(transcript_data)
+                # Récupérer les noms personnalisés des locuteurs s'ils existent
+                speaker_names = {}
+                meeting_id = meeting.get('id')
+                user_id = meeting.get('user_id')
+                
+                # Import ici pour éviter les imports circulaires
+                from ..db.queries import get_meeting_speakers
+                speakers_data = get_meeting_speakers(meeting_id, user_id)
+                
+                if speakers_data:
+                    for speaker in speakers_data:
+                        speaker_names[speaker['speaker_id']] = speaker['custom_name']
+                
+                # Formater le texte avec les noms personnalisés si disponibles
+                transcript_text = format_transcript_text(transcript_data, speaker_names)
                 
                 # Calculer le nombre de locuteurs
                 speakers_set = set()
@@ -57,6 +71,7 @@ def check_and_update_transcription(meeting: Dict[str, Any]) -> Dict[str, Any]:
                 speakers_count = len(speakers_set) if speakers_set else 1
             except Exception as e:
                 logger.error(f"Erreur lors du formatage du texte: {str(e)}")
+                transcript_text = format_transcript_text(transcript_data)  # Fallback au format standard
                 speakers_count = 1
         else:
             speakers_count = 1
@@ -112,18 +127,33 @@ def get_assemblyai_transcript_details(transcript_id: str) -> Optional[Dict[str, 
         logger.error(f"Erreur lors de la récupération des détails de la transcription: {str(e)}")
         return None
 
-def format_transcript_text(transcript_data: Dict[str, Any]) -> str:
-    """Formater le texte de la transcription avec les locuteurs"""
+def format_transcript_text(transcript_data: Dict[str, Any], speaker_names: Dict[str, str] = None) -> str:
+    """Formater le texte de la transcription avec les locuteurs
+    
+    Args:
+        transcript_data: Données de la transcription provenant d'AssemblyAI
+        speaker_names: Dictionnaire des noms personnalisés pour chaque locuteur {speaker_id: custom_name}
+        
+    Returns:
+        Texte formaté avec les noms des locuteurs
+    """
     text = transcript_data.get('text', '')
     utterances = transcript_data.get('utterances', [])
     
     if not utterances:
         return text
     
+    # Utiliser un dictionnaire vide si speaker_names n'est pas fourni
+    if speaker_names is None:
+        speaker_names = {}
+    
     formatted_text = []
     for utterance in utterances:
-        speaker = utterance.get('speaker', 'Unknown')
+        speaker_id = utterance.get('speaker', 'Unknown')
         utterance_text = utterance.get('text', '')
-        formatted_text.append(f"Speaker {speaker}: {utterance_text}")
+        
+        # Utiliser le nom personnalisé s'il existe, sinon utiliser le nom par défaut
+        speaker_name = speaker_names.get(speaker_id, f"Speaker {speaker_id}")
+        formatted_text.append(f"{speaker_name}: {utterance_text}")
     
     return "\n".join(formatted_text)
