@@ -1,6 +1,6 @@
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from .database import get_db_connection, release_db_connection
 import logging
 
@@ -369,7 +369,7 @@ def get_meetings_by_status(status, max_age_hours=72):
         
         # Calculer la date de début pour le filtrage (maintenant - max_age_hours)
         max_age_date = (datetime.utcnow().replace(microsecond=0) - 
-                       datetime.timedelta(hours=max_age_hours)).isoformat()
+                       timedelta(hours=max_age_hours)).isoformat()
         
         # Récupérer toutes les réunions correspondant au statut et pas trop anciennes
         cursor.execute(

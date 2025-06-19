@@ -2,12 +2,13 @@
 Routes simplifiées pour la gestion des réunions
 """
 
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query, Path
 from fastapi.logger import logger
-from typing import Optional
+from typing import Optional, Dict, Any, List
 import os
 from datetime import datetime
 import logging
+import traceback
 
 from ..core.security import get_current_user
 from ..services.assemblyai import transcribe_meeting
@@ -243,6 +244,31 @@ async def get_meeting_details(
         if meeting.get("transcript_status") == "processing":
             logger.info(f"Vérification automatique du statut de la transcription pour la réunion {meeting_id}")
             meeting = check_and_update_transcription(meeting)
+        
+        # Appliquer les noms personnalisés des speakers à la transcription si elle est complétée
+        if meeting.get("transcript_status") == "completed" and meeting.get("transcript_id"):
+            try:
+                from ..db.queries import get_meeting_speakers
+                from ..services.transcription_checker import get_assemblyai_transcript_details, format_transcript_text
+                
+                logger.info(f"Application des noms personnalisés à la transcription pour la réunion {meeting_id}")
+                speakers_data = get_meeting_speakers(meeting_id, current_user["id"])
+                
+                # S'il existe des speakers personnalisés, formater la transcription avec ces noms
+                if speakers_data and any(speaker.get("custom_name") for speaker in speakers_data):
+                    transcript_id = meeting.get("transcript_id")
+                    transcript_data = get_assemblyai_transcript_details(transcript_id)
+                    
+                    if transcript_data:
+                        speaker_names = {speaker["speaker_id"]: speaker["custom_name"] for speaker in speakers_data if speaker.get("custom_name")}
+                        logger.info(f"Noms personnalisés détectés: {speaker_names}")
+                        
+                        if speaker_names:
+                            updated_transcript = format_transcript_text(transcript_data, speaker_names)
+                            meeting["transcript_text"] = updated_transcript
+                            logger.info(f"Transcription mise à jour avec {len(speaker_names)} noms personnalisés")
+            except Exception as e:
+                logger.error(f"Erreur lors de l'application des noms personnalisés: {str(e)}")
         
         # Ajouter des informations supplémentaires pour faciliter le débogage côté frontend
         meeting["status"] = "success"

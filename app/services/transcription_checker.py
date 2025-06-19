@@ -127,7 +127,7 @@ def get_assemblyai_transcript_details(transcript_id: str) -> Optional[Dict[str, 
         logger.error(f"Erreur lors de la récupération des détails de la transcription: {str(e)}")
         return None
 
-def format_transcript_text(transcript_data: Dict[str, Any], speaker_names: Dict[str, str] = None) -> str:
+def format_transcript_text(transcript_data: Dict[str, Any], speaker_names: Optional[Dict[str, str]] = None) -> str:
     """Formater le texte de la transcription avec les locuteurs
     
     Args:
@@ -152,8 +152,35 @@ def format_transcript_text(transcript_data: Dict[str, Any], speaker_names: Dict[
         speaker_id = utterance.get('speaker', 'Unknown')
         utterance_text = utterance.get('text', '')
         
-        # Utiliser le nom personnalisé s'il existe, sinon utiliser le nom par défaut
-        speaker_name = speaker_names.get(speaker_id, f"Speaker {speaker_id}")
+        # SAFETY: Assurer qu'on a toujours un texte, même vide
+        if utterance_text is None:
+            utterance_text = ''
+        
+        # Chercher le nom personnalisé avec différents formats possibles
+        speaker_name = None
+        
+        # 1. Essayer d'abord avec l'ID simple (ex: "A", "B", "C", "D")
+        if speaker_id in speaker_names:
+            speaker_name = speaker_names[speaker_id]
+            logger.debug(f"Found custom name for simple ID '{speaker_id}': {speaker_name}")
+        
+        # 2. Essayer avec le format "Speaker X" (ex: "Speaker A", "Speaker B")
+        full_speaker_id = f"Speaker {speaker_id}"
+        if speaker_name is None and full_speaker_id in speaker_names:
+            speaker_name = speaker_names[full_speaker_id]
+            logger.debug(f"Found custom name for full ID '{full_speaker_id}': {speaker_name}")
+        
+        # 3. Si aucun nom personnalisé trouvé, utiliser le format par défaut
+        if speaker_name is None:
+            speaker_name = full_speaker_id
+            logger.debug(f"No custom name found for speaker '{speaker_id}', using default: {speaker_name}")
+        
+        # IMPORTANT: Toujours ajouter la ligne, même si le texte est vide
+        # Cela évite que des speakers disparaissent complètement
         formatted_text.append(f"{speaker_name}: {utterance_text}")
+        
+        # Debug logging pour tracker les problèmes
+        if not utterance_text.strip():
+            logger.warning(f"Utterance vide pour {speaker_name} (speaker_id: {speaker_id})")
     
     return "\n".join(formatted_text)

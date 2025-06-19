@@ -6,7 +6,7 @@ from ..models.meeting import Meeting, MeetingCreate, MeetingUpdate
 from ..db.firebase import upload_mp3
 from ..services.assemblyai import transcribe_meeting, convert_to_wav, check_transcription_status, process_transcription
 from ..services.mistral_summary import process_meeting_summary
-from ..db.queries import create_meeting, get_meeting, get_meetings_by_user, update_meeting, delete_meeting
+from ..db.queries import create_meeting, get_meeting, get_meetings_by_user, update_meeting, delete_meeting, get_meeting_speakers
 from datetime import datetime
 from typing import List, Optional
 import os
@@ -14,6 +14,7 @@ import tempfile
 import traceback
 import subprocess
 import threading
+from ..services.transcription_checker import get_assemblyai_transcript_details, format_transcript_text
 
 router = APIRouter(prefix="/meetings", tags=["Réunions"])
 
@@ -163,7 +164,8 @@ async def get_meeting_route(
     - **meeting_id**: Identifiant unique de la réunion
     
     Retourne toutes les informations de la réunion, y compris le texte de transcription
-    si la transcription est terminée.
+    si la transcription est terminée. Les noms personnalisés des locuteurs sont
+    automatiquement appliqués à la transcription.
     """
     # Log pour le debugging
     logger.info(f"Attempting to get meeting with ID: {meeting_id} for user: {current_user['id']}")
@@ -181,7 +183,78 @@ async def get_meeting_route(
                 "type": "MEETING_NOT_FOUND"
             }
         )
+    
+    # Si la transcription est terminée, appliquer automatiquement les noms personnalisés
+    if (meeting.get("transcript_status") == "completed" and 
+        meeting.get("transcript_text") and 
+        meeting.get("transcript_id")):
         
+        logger.info(f"[DEBUG] Checking custom speaker names for meeting {meeting_id}")
+        try:
+            # Récupérer les noms personnalisés des locuteurs
+            speakers_data = get_meeting_speakers(meeting_id, current_user["id"])
+            logger.info(f"[DEBUG] Got speakers_data: {speakers_data}")
+            
+            if speakers_data:
+                # Construire le dictionnaire des noms personnalisés
+                speaker_names = {}
+                for speaker in speakers_data:
+                    speaker_names[speaker["speaker_id"]] = speaker["custom_name"]
+                
+                logger.info(f"[DEBUG] Speaker names mapping: {speaker_names}")
+                
+                # Si on a des noms personnalisés, vérifier si la transcription les utilise déjà
+                if speaker_names:
+                    transcript_text = meeting.get("transcript_text", "")
+                    needs_update = False
+                    
+                    # Vérifier si les noms personnalisés sont déjà appliqués
+                    for speaker_id, custom_name in speaker_names.items():
+                        logger.info(f"[DEBUG] Checking speaker {speaker_id} -> {custom_name}")
+                        logger.info(f"[DEBUG] Looking for '{speaker_id}:' in transcript")
+                        logger.info(f"[DEBUG] Looking for '{custom_name}' in transcript")
+                        
+                        speaker_in_transcript = f"{speaker_id}:" in transcript_text
+                        custom_name_in_transcript = custom_name in transcript_text
+                        
+                        logger.info(f"[DEBUG] '{speaker_id}:' found: {speaker_in_transcript}")
+                        logger.info(f"[DEBUG] '{custom_name}' found: {custom_name_in_transcript}")
+                        
+                        if speaker_in_transcript and not custom_name_in_transcript:
+                            needs_update = True
+                            logger.info(f"[DEBUG] Needs update for speaker {speaker_id}")
+                            break
+                    
+                    logger.info(f"[DEBUG] Final needs_update: {needs_update}")
+                    
+                    # Si la transcription a besoin d'être mise à jour
+                    if needs_update:
+                        logger.info(f"Applying custom speaker names to transcript for meeting {meeting_id}")
+                        
+                        # Récupérer les données complètes de la transcription depuis AssemblyAI
+                        transcript_data = get_assemblyai_transcript_details(meeting["transcript_id"])
+                        
+                        if transcript_data:
+                            # Formater la transcription avec les noms personnalisés
+                            updated_transcript = format_transcript_text(transcript_data, speaker_names)
+                            
+                            # Mettre à jour la transcription dans la réponse
+                            meeting["transcript_text"] = updated_transcript
+                            
+                            # Mettre à jour aussi en base de données pour la prochaine fois
+                            update_meeting(meeting_id, current_user["id"], {
+                                "transcript_text": updated_transcript
+                            })
+                            
+                            logger.info(f"Transcript updated with custom names: {list(speaker_names.values())}")
+                    else:
+                        logger.info(f"[DEBUG] No update needed - custom names already applied or no names to apply")
+        
+        except Exception as e:
+            # Log l'erreur mais ne pas faire échouer la requête
+            logger.error(f"Error applying custom speaker names: {str(e)}")
+            logger.error(f"[DEBUG] Exception details: {traceback.format_exc()}")
+    
     # Assurer que transcription_status est présent dans la réponse pour compatibilité frontend
     if 'transcript_status' in meeting and 'transcription_status' not in meeting:
         meeting['transcription_status'] = meeting['transcript_status']
@@ -190,8 +263,8 @@ async def get_meeting_route(
 
 @router.put("/{meeting_id}", response_model=dict)
 async def update_meeting_route(
+    meeting_update: MeetingUpdate,
     meeting_id: str = Path(..., description="ID unique de la réunion"),
-    meeting_update: MeetingUpdate = ...,
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -209,10 +282,16 @@ async def update_meeting_route(
         raise HTTPException(status_code=400, detail="Aucune donnée à mettre à jour")
     
     # Mettre à jour les données
-    updated_meeting = update_meeting(meeting_id, current_user["id"], update_data)
+    update_success = update_meeting(meeting_id, current_user["id"], update_data)
+    
+    if not update_success:
+        raise HTTPException(status_code=404, detail="Réunion non trouvée")
+    
+    # Récupérer la réunion mise à jour
+    updated_meeting = get_meeting(meeting_id, current_user["id"])
     
     if not updated_meeting:
-        raise HTTPException(status_code=404, detail="Réunion non trouvée")
+        raise HTTPException(status_code=404, detail="Réunion non trouvée après mise à jour")
         
     return updated_meeting
 

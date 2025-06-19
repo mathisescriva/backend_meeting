@@ -12,7 +12,7 @@ import subprocess
 import threading
 
 from ..core.config import settings
-from ..db.queries import update_meeting, get_meeting, normalize_transcript_format
+from ..db.queries import update_meeting, get_meeting, normalize_transcript_format, get_meeting_speakers
 
 # Configuration pour AssemblyAI
 # Utiliser directement la clé API fournie au lieu de passer par settings
@@ -398,6 +398,18 @@ def process_completed_transcript(meeting_id, user_id, transcript):
         audio_duration = transcript.audio_duration or 0
         logger.info(f"Durée audio: {audio_duration} secondes")
         
+        # Récupérer les noms personnalisés des locuteurs s'ils existent
+        speaker_names = {}
+        try:
+            speakers_data = get_meeting_speakers(meeting_id, user_id)
+            if speakers_data:
+                for speaker in speakers_data:
+                    speaker_names[speaker['speaker_id']] = speaker['custom_name']
+                logger.info(f"Noms personnalisés récupérés: {speaker_names}")
+        except Exception as e:
+            logger.warning(f"Impossible de récupérer les noms personnalisés: {str(e)}")
+            speaker_names = {}
+        
         # Extraction et comptage des locuteurs
         speaker_count = 0
         unique_speakers = set()
@@ -411,9 +423,35 @@ def process_completed_transcript(meeting_id, user_id, transcript):
                 for utterance in transcript.utterances:
                     speaker = getattr(utterance, 'speaker', 'Unknown')
                     text = getattr(utterance, 'text', '').strip()
-                    if speaker and text:
+                    
+                    # SAFETY: Assurer qu'on a toujours un texte, même vide
+                    if text is None:
+                        text = ''
+                    
+                    if speaker:
                         unique_speakers.add(speaker)
-                        utterance_formatted = f"Speaker {speaker}: {text}"
+                        
+                        # Utiliser le nom personnalisé s'il existe, sinon utiliser le format par défaut
+                        speaker_name = None
+                        
+                        # 1. Essayer d'abord avec l'ID simple (ex: "A", "B", "C", "D")
+                        if speaker in speaker_names:
+                            speaker_name = speaker_names[speaker]
+                            logger.debug(f"Found custom name for simple ID '{speaker}': {speaker_name}")
+                        
+                        # 2. Essayer avec le format "Speaker X" (ex: "Speaker A", "Speaker B")
+                        full_speaker_id = f"Speaker {speaker}"
+                        if speaker_name is None and full_speaker_id in speaker_names:
+                            speaker_name = speaker_names[full_speaker_id]
+                            logger.debug(f"Found custom name for full ID '{full_speaker_id}': {speaker_name}")
+                        
+                        # 3. Si aucun nom personnalisé trouvé, utiliser le format par défaut
+                        if speaker_name is None:
+                            speaker_name = full_speaker_id
+                            logger.debug(f"No custom name found for speaker '{speaker}', using default: {speaker_name}")
+                        
+                        # IMPORTANT: Toujours ajouter la ligne, même si le texte est vide
+                        utterance_formatted = f"{speaker_name}: {text}"
                         utterances_text.append(utterance_formatted)
                         utterances_data.append({"speaker": speaker, "text": text})
                 
@@ -694,13 +732,49 @@ def process_pending_transcriptions():
                             # Essayer de formater avec les locuteurs si disponibles
                             if 'utterances' in transcript_data and transcript_data['utterances']:
                                 try:
+                                    # Récupérer les noms personnalisés des locuteurs s'ils existent
+                                    speaker_names = {}
+                                    try:
+                                        speakers_data = get_meeting_speakers(meeting_id, user_id)
+                                        if speakers_data:
+                                            for speaker in speakers_data:
+                                                speaker_names[speaker['speaker_id']] = speaker['custom_name']
+                                    except Exception as e:
+                                        logger.warning(f"Impossible de récupérer les noms personnalisés: {str(e)}")
+                                        speaker_names = {}
+                                    
                                     formatted_text = []
                                     speakers_set = set()
                                     for utterance in transcript_data.get('utterances', []):
                                         speaker = utterance.get('speaker', 'Unknown')
                                         speakers_set.add(speaker)
                                         text = utterance.get('text', '')
-                                        formatted_text.append(f"Speaker {speaker}: {text}")
+                                        
+                                        # SAFETY: Assurer qu'on a toujours un texte, même vide
+                                        if text is None:
+                                            text = ''
+                                        
+                                        # Utiliser le nom personnalisé s'il existe, sinon utiliser le format par défaut
+                                        speaker_name = None
+                                        
+                                        # 1. Essayer d'abord avec l'ID simple (ex: "A", "B", "C", "D")
+                                        if speaker in speaker_names:
+                                            speaker_name = speaker_names[speaker]
+                                            logger.debug(f"Found custom name for simple ID '{speaker}': {speaker_name}")
+                                        
+                                        # 2. Essayer avec le format "Speaker X" (ex: "Speaker A", "Speaker B")
+                                        full_speaker_id = f"Speaker {speaker}"
+                                        if speaker_name is None and full_speaker_id in speaker_names:
+                                            speaker_name = speaker_names[full_speaker_id]
+                                            logger.debug(f"Found custom name for full ID '{full_speaker_id}': {speaker_name}")
+                                        
+                                        # 3. Si aucun nom personnalisé trouvé, utiliser le format par défaut
+                                        if speaker_name is None:
+                                            speaker_name = full_speaker_id
+                                            logger.debug(f"No custom name found for speaker '{speaker}', using default: {speaker_name}")
+                                        
+                                        # IMPORTANT: Toujours ajouter la ligne, même si le texte est vide
+                                        formatted_text.append(f"{speaker_name}: {text}")
                                     
                                     transcript_text = "\n".join(formatted_text)
                                     speakers_count = len(speakers_set) if speakers_set else 1

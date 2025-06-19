@@ -10,6 +10,7 @@ from ..db.queries import (
 from ..services.transcription_checker import get_assemblyai_transcript_details, format_transcript_text
 from typing import List, Dict, Any, Optional
 import uuid
+from datetime import datetime
 
 router = APIRouter(prefix="/meetings/{meeting_id}/speakers", tags=["Locuteurs"])
 
@@ -88,15 +89,48 @@ async def create_or_update_speaker(
         )
     
     # Trouver le locuteur nouvellement créé/mis à jour
+    created_speaker = None
     for speaker in speakers:
         if speaker["speaker_id"] == speaker_data.speaker_id:
-            return speaker
+            created_speaker = speaker
+            break
     
-    # Fallback au cas où le locuteur n'est pas retrouvé (ne devrait pas arriver)
-    raise HTTPException(
-        status_code=500,
-        detail={"message": "Erreur lors de la création du locuteur", "type": "SERVER_ERROR"}
-    )
+    if not created_speaker:
+        # Fallback au cas où le locuteur n'est pas retrouvé (ne devrait pas arriver)
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "Erreur lors de la création du locuteur", "type": "SERVER_ERROR"}
+        )
+        
+    # Mettre à jour automatiquement la transcription avec le nouveau nom de locuteur
+    try:
+        # Vérifier que la transcription est terminée
+        if meeting.get("transcript_status") == "completed" and meeting.get("transcript_id"):
+            transcript_id = meeting.get("transcript_id")
+            transcript_data = get_assemblyai_transcript_details(transcript_id)
+            
+            if transcript_data:
+                # Récupérer tous les noms personnalisés des locuteurs
+                speaker_names = {s["speaker_id"]: s["custom_name"] for s in speakers if s.get("custom_name")}
+                
+                # Formater la transcription avec les noms personnalisés
+                updated_transcript = format_transcript_text(transcript_data, speaker_names)
+                
+                # Mettre à jour le texte de transcription dans la base de données
+                from ..db.queries import update_meeting
+                logger.info(f"Mise à jour automatique de la transcription après renommage de {speaker_data.speaker_id} en {speaker_data.custom_name}")
+                
+                update_result = update_meeting(meeting_id, current_user["id"], {
+                    "transcript_text": updated_transcript,
+                    "updated_at": datetime.utcnow().isoformat()  # Force une mise à jour du timestamp
+                })
+                
+                logger.info(f"Transcription mise à jour automatiquement: {update_result}")
+    except Exception as e:
+        # Log l'erreur mais ne pas faire échouer la création du speaker
+        logger.error(f"Erreur lors de la mise à jour automatique de la transcription: {str(e)}")
+    
+    return created_speaker
 
 
 @router.delete("/{speaker_id}", response_model=dict)
@@ -193,9 +227,21 @@ async def get_updated_transcript(
     
     # Mettre à jour le texte de transcription dans la base de données
     from ..db.queries import update_meeting
-    update_meeting(meeting_id, current_user["id"], {
-        "transcript_text": updated_transcript
+    logger.info(f"Mise à jour de la transcription pour {meeting_id} avec {len(speaker_names)} noms personnalisés")
+    for speaker_id, name in speaker_names.items():
+        logger.info(f"Remplacement du locuteur {speaker_id} par {name}")
+        
+    update_result = update_meeting(meeting_id, current_user["id"], {
+        "transcript_text": updated_transcript,
+        "updated_at": datetime.utcnow().isoformat()  # Force une mise à jour du timestamp
     })
+    
+    # Vérification que la mise à jour a bien été prise en compte
+    updated_meeting = get_meeting(meeting_id, current_user["id"])
+    if updated_meeting and updated_meeting.get("transcript_text") == updated_transcript:
+        logger.info("Vérification OK: La transcription a été correctement mise à jour")
+    else:
+        logger.warning("ATTENTION: La transcription ne semble pas avoir été mise à jour correctement")
     
     return {
         "success": True,
