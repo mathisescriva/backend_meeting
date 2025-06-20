@@ -19,6 +19,16 @@ def create_default_users():
             "email": "nicolas@gilbert.fr",
             "password": "Gilbert2025!",
             "full_name": "Nicolas Gilbert"
+        },
+        {
+            "email": "marie@dialog-ia.com",
+            "password": "Zk&6AtNmY^$!",
+            "full_name": "Marie Dialog IA"
+        },
+        {
+            "email": "mathieu@dialog-ia.com",
+            "password": "%hte#eW&2@Jv",
+            "full_name": "Mathieu Dialog IA"
         }
         # Ajoutez d'autres utilisateurs par défaut ici
     ]
