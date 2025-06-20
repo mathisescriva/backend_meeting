@@ -1,172 +1,228 @@
-#!/usr/bin/env python
-"""
-Script de test pour renommer les intervenants d'une réunion existante et vérifier
-que les modifications sont bien sauvegardées dans la base de données.
-"""
+import requests
 import json
-import sqlite3
+import time
 import sys
-from uuid import uuid4
-from app.db.database import get_db_connection
-from app.db.queries import (
-    get_meeting, get_meeting_speakers, 
-    set_meeting_speaker, delete_meeting_speaker
-)
-from app.services.transcription_checker import (
-    get_assemblyai_transcript_details, format_transcript_text
-)
 
-def print_section(title):
-    """Affiche un titre de section formaté"""
-    print(f"\n{'=' * 50}")
-    print(f"  {title}")
-    print(f"{'=' * 50}")
+# Configuration
+BASE_URL = "http://localhost:8001"
+EMAIL = "testing.admin@gilbert.fr"  # Utilisateur par défaut
+PASSWORD = "Gilbert2025!"          # Mot de passe par défaut
 
-# Trouver une réunion existante avec une transcription terminée
-print_section("LISTE DES RÉUNIONS")
-print("Recherche d'une réunion avec une transcription terminée...")
-
-try:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Récupérer la liste des meetings avec transcription terminée
-    cursor.execute(
-        "SELECT id, user_id, title, transcript_status, transcript_id FROM meetings "
-        "WHERE transcript_status = 'completed' AND transcript_id IS NOT NULL"
+def login():
+    """Se connecter et obtenir un token JWT"""
+    response = requests.post(
+        f"{BASE_URL}/auth/login",
+        data={"username": EMAIL, "password": PASSWORD}
     )
-    meetings = cursor.fetchall()
-    
-    if not meetings:
-        print("Aucune réunion avec transcription terminée trouvée!")
+    if response.status_code != 200:
+        print(f"Erreur de connexion: {response.status_code}")
+        print(response.text)
         sys.exit(1)
-        
+    
+    return response.json()["access_token"]
+
+def get_meetings(token):
+    """Récupère la liste des réunions"""
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{BASE_URL}/meetings", headers=headers)
+    if response.status_code != 200:
+        print(f"Erreur lors de la récupération des réunions: {response.status_code}")
+        print(response.text)
+        return None
+    
+    # L'API renvoie directement une liste de réunions
+    return response.json()
+
+def get_meeting_details(token, meeting_id):
+    """Récupère les détails d'une réunion spécifique"""
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{BASE_URL}/meetings/{meeting_id}", headers=headers)
+    if response.status_code != 200:
+        print(f"Erreur lors de la récupération des détails de la réunion: {response.status_code}")
+        print(response.text)
+        return None
+    
+    return response.json()
+
+def get_meeting_speakers(token, meeting_id):
+    """Récupère les noms personnalisés des locuteurs pour une réunion"""
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{BASE_URL}/meetings/{meeting_id}/speakers", headers=headers)
+    if response.status_code != 200:
+        print(f"Erreur lors de la récupération des locuteurs: {response.status_code}")
+        print(response.text)
+        return None
+    
+    return response.json()
+
+def set_meeting_speaker(token, meeting_id, speaker_id, custom_name):
+    """Définit un nom personnalisé pour un locuteur"""
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    data = {
+        "speaker_id": speaker_id,
+        "custom_name": custom_name
+    }
+    
+    response = requests.post(
+        f"{BASE_URL}/meetings/{meeting_id}/speakers",
+        headers=headers,
+        json=data
+    )
+    
+    if response.status_code != 200:
+        print(f"Erreur lors de la définition du nom personnalisé: {response.status_code}")
+        print(response.text)
+        return None
+    
+    return response.json()
+
+def update_transcript_with_custom_names(token, meeting_id):
+    """Met à jour la transcription avec les noms personnalisés"""
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{BASE_URL}/meetings/{meeting_id}/speakers/update-transcript", headers=headers)
+    if response.status_code != 200:
+        print(f"Erreur lors de la mise à jour de la transcription: {response.status_code}")
+        print(response.text)
+        return None
+    
+    return response.json()
+
+def delete_meeting_speaker(token, meeting_id, speaker_id):
+    """Supprime un nom personnalisé pour un locuteur"""
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.delete(f"{BASE_URL}/meetings/{meeting_id}/speakers/{speaker_id}", headers=headers)
+    if response.status_code != 200:
+        print(f"Erreur lors de la suppression du nom personnalisé: {response.status_code}")
+        print(response.text)
+        return None
+    
+    return response.json()
+
+def main():
+    # Connexion
+    print("Connexion au système...")
+    token = login()
+    print("Connexion réussie!")
+    
+    # Récupérer les réunions
+    print("\nRécupération des réunions...")
+    meetings = get_meetings(token)
+    
+    if not meetings or len(meetings) == 0:
+        print("Aucune réunion trouvée. Veuillez d'abord créer une réunion avec une transcription.")
+        return
+    
     # Afficher les réunions disponibles
-    print(f"Trouvé {len(meetings)} réunion(s) avec transcription terminée:")
+    print("\nRéunions disponibles:")
     for i, meeting in enumerate(meetings):
-        print(f"{i+1}. ID: {meeting[0]}, Titre: {meeting[2]}")
+        print(f"{i+1}. {meeting.get('title', 'Sans titre')} (ID: {meeting['id']}, Status: {meeting.get('transcript_status', 'inconnu')})")
     
-    # Sélectionner la première réunion
-    selected_meeting = meetings[0]
-    meeting_id = selected_meeting[0]
-    user_id = selected_meeting[1]
-    meeting_title = selected_meeting[2]
-    transcript_id = selected_meeting[4]
+    # Sélectionner automatiquement la première réunion pour les tests
+    meeting_index = 0
+    print(f"\nSélection automatique de la réunion {meeting_index + 1}")
+    meeting_id = meetings[meeting_index]["id"]
     
-    print(f"\nRéunion sélectionnée: {meeting_title} (ID: {meeting_id})")
+    # Récupérer les détails de la réunion
+    meeting_details = get_meeting_details(token, meeting_id)
     
-    # Vérifier si des noms personnalisés existent déjà
-    print_section("NOMS PERSONNALISÉS EXISTANTS")
-    cursor.execute(
-        "SELECT speaker_id, custom_name FROM meeting_speakers WHERE meeting_id = ?",
-        (meeting_id,)
-    )
-    existing_speakers = cursor.fetchall()
+    if not meeting_details:
+        print("Impossible de récupérer les détails de la réunion.")
+        return
     
-    if existing_speakers:
-        print("Noms personnalisés existants:")
-        for speaker in existing_speakers:
-            print(f"  - Locuteur {speaker[0]}: {speaker[1]}")
+    # Vérifier si la transcription est complète
+    if meeting_details["transcript_status"] != "completed":
+        print(f"La transcription n'est pas terminée (status: {meeting_details['transcript_status']})")
+        return
+    
+    # Afficher un extrait de la transcription originale
+    print("\nExtrait de la transcription originale:")
+    transcript_text = meeting_details.get("transcript_text", "")
+    print(transcript_text[:500] + "..." if len(transcript_text) > 500 else transcript_text)
+    
+    # Récupérer les locuteurs actuels de la réunion
+    print("\nRécupération des locuteurs actuels...")
+    speakers_data = get_meeting_speakers(token, meeting_id)
+    
+    if speakers_data and "speakers" in speakers_data:
+        print("\nLocuteurs actuellement définis:")
+        for speaker in speakers_data["speakers"]:
+            print(f"Locuteur {speaker['speaker_id']}: {speaker['custom_name']}")
+    else:
+        print("Aucun nom personnalisé défini pour cette réunion.")
+    
+    # Analyser le texte pour trouver les locuteurs uniques
+    detected_speakers = set()
+    for line in transcript_text.split('\n'):
+        if line.startswith("Speaker "):
+            parts = line.split(":", 1)
+            if len(parts) > 0:
+                speaker_id = parts[0].replace("Speaker ", "").strip()
+                detected_speakers.add(speaker_id)
+    
+    print("\nLocuteurs détectés dans la transcription:", ", ".join(detected_speakers))
+    
+    # Automatiser l'ajout de noms personnalisés
+    print("\nAutomatisation du test de renommage des locuteurs...")
+    
+    # Dictionnaire de noms personnalisés pour les tests
+    custom_names = {
+        "A": "Monsieur le Maire",
+        "B": "Conseiller Martin",
+        "C": "Adjointe Dubois",
+        "D": "Secrétaire Legrand"  
+    }
+    
+    # Ajouter des noms personnalisés pour chaque locuteur détecté
+    print("\nDéfinition des noms personnalisés:")
+    for speaker_id in detected_speakers:
+        if speaker_id in custom_names:
+            custom_name = custom_names[speaker_id]
+            result = set_meeting_speaker(token, meeting_id, speaker_id, custom_name)
+            print(f"Nom personnalisé défini pour {speaker_id}: {custom_name}")
+    
+    # Mettre à jour la transcription avec les nouveaux noms
+    print("\nMise à jour de la transcription avec les noms personnalisés...")
+    result = update_transcript_with_custom_names(token, meeting_id)
+    if result:
+        print("Transcription mise à jour avec succès!")
         
-        # Suppression des noms existants pour un test propre
-        print("\nSuppression des noms personnalisés existants pour un test propre...")
-        cursor.execute(
-            "DELETE FROM meeting_speakers WHERE meeting_id = ?",
-            (meeting_id,)
-        )
-        conn.commit()
-    else:
-        print("Aucun nom personnalisé existant.")
-    
-    # Récupérer le contenu de la transcription
-    print_section("CONTENU DE LA TRANSCRIPTION ORIGINALE")
-    cursor.execute(
-        "SELECT transcript_text FROM meetings WHERE id = ?",
-        (meeting_id,)
-    )
-    result = cursor.fetchone()
-    original_transcript = result[0] if result else "Aucune transcription trouvée"
-    print(original_transcript[:500] + "..." if len(original_transcript) > 500 else original_transcript)
-    
-    # Récupérer les détails de la transcription depuis AssemblyAI
-    print_section("IDENTIFICATION DES LOCUTEURS")
-    transcript_data = get_assemblyai_transcript_details(transcript_id)
-    
-    if not transcript_data or 'utterances' not in transcript_data or not transcript_data['utterances']:
-        print("Impossible de récupérer les détails de la transcription ou pas de diarisation.")
-        sys.exit(1)
-    
-    # Identifier les locuteurs uniques
-    unique_speakers = set()
-    for utterance in transcript_data['utterances']:
-        unique_speakers.add(utterance.get('speaker', 'Unknown'))
-    
-    print(f"Locuteurs identifiés: {', '.join(sorted(unique_speakers))}")
-    
-    # Créer des noms personnalisés pour chaque locuteur
-    custom_names = {}
-    for speaker in sorted(unique_speakers):
-        if speaker == 'A':
-            custom_names[speaker] = "Jean Dupont"
-        elif speaker == 'B':
-            custom_names[speaker] = "Marie Martin"
-        elif speaker == 'C':
-            custom_names[speaker] = "Pierre Durand"
-        else:
-            custom_names[speaker] = f"Personne {speaker}"
-    
-    print("\nNoms personnalisés à appliquer:")
-    for speaker_id, name in custom_names.items():
-        print(f"  - Locuteur {speaker_id}: {name}")
-    
-    # Ajouter les noms personnalisés à la base de données
-    print_section("AJOUT DES NOMS PERSONNALISÉS")
-    for speaker_id, custom_name in custom_names.items():
-        success = set_meeting_speaker(meeting_id, user_id, speaker_id, custom_name)
-        print(f"Ajout de '{custom_name}' pour locuteur '{speaker_id}': {'Succès' if success else 'Échec'}")
-    
-    # Vérifier les noms sauvegardés
-    print_section("VÉRIFICATION DES NOMS SAUVEGARDÉS")
-    saved_speakers = get_meeting_speakers(meeting_id, user_id)
-    
-    if saved_speakers:
-        print("Noms personnalisés sauvegardés dans la base de données:")
-        for speaker in saved_speakers:
-            print(f"  - Locuteur {speaker['speaker_id']}: {speaker['custom_name']}")
-    else:
-        print("Erreur: Aucun nom personnalisé trouvé après enregistrement!")
-    
-    # Récupérer la réunion complète et vérifier la transcription
-    print_section("MISE À JOUR DE LA TRANSCRIPTION")
-    
-    # Formater la transcription avec les noms personnalisés
-    formatted_transcript = format_transcript_text(transcript_data, {s['speaker_id']: s['custom_name'] for s in saved_speakers})
-    
-    print("Transcription avec noms personnalisés (extrait):")
-    print(formatted_transcript[:500] + "..." if len(formatted_transcript) > 500 else formatted_transcript)
-    
-    # Mise à jour de la transcription dans la base de données
-    cursor.execute(
-        "UPDATE meetings SET transcript_text = ? WHERE id = ?",
-        (formatted_transcript, meeting_id)
-    )
-    conn.commit()
-    
-    # Vérifier que la transcription a été mise à jour
-    print_section("VÉRIFICATION FINALE")
-    cursor.execute(
-        "SELECT transcript_text FROM meetings WHERE id = ?",
-        (meeting_id,)
-    )
-    updated_transcript = cursor.fetchone()[0]
-    
-    print("Transcription mise à jour dans la base de données (extrait):")
-    print(updated_transcript[:500] + "..." if len(updated_transcript) > 500 else updated_transcript)
-    
-    print("\nTest terminé avec succès!")
-    
-except Exception as e:
-    print(f"ERREUR: {str(e)}")
-finally:
-    if 'conn' in locals():
-        conn.close()
+        # Récupérer la version mise à jour
+        meeting_details = get_meeting_details(token, meeting_id)
+        print("\nExtrait de la transcription mise à jour:")
+        print(meeting_details["transcript_text"][:500])
+        
+    # Récupérer la liste mise à jour des locuteurs
+    speakers = get_meeting_speakers(token, meeting_id)
+    print("\nLocuteurs personnalisés après mise à jour:")
+    for speaker in speakers.get("speakers", []):
+        print(f"Locuteur {speaker['speaker_id']}: {speaker['custom_name']}")
+        
+    # Test de suppression d'un nom personnalisé
+    print("\nTest de suppression d'un nom personnalisé...")
+    detected_speakers_list = list(detected_speakers)
+    if detected_speakers_list:
+        speaker_to_delete = detected_speakers_list[0]  # Supprimer le premier locuteur
+        result = delete_meeting_speaker(token, meeting_id, speaker_to_delete)
+        if result:
+            print(f"Nom personnalisé supprimé pour le locuteur {speaker_to_delete}")
+            
+            # Mettre à jour la transcription après la suppression
+            result = update_transcript_with_custom_names(token, meeting_id)
+            if result:
+                print("\nTranscription mise à jour après suppression!")
+                
+                # Vérifier les locuteurs restants
+                speakers = get_meeting_speakers(token, meeting_id)
+                print("\nLocuteurs personnalisés après suppression:")
+                for speaker in speakers.get("speakers", []):
+                    print(f"Locuteur {speaker['speaker_id']}: {speaker['custom_name']}")
+                    
+                # Récupérer la version finale de la transcription
+                meeting_details = get_meeting_details(token, meeting_id)
+                print("\nExtrait de la transcription finale:")
+                print(meeting_details["transcript_text"][:500])
+
+    print("\nTest terminé!")
+
+if __name__ == "__main__":
+    main()

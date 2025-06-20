@@ -1,0 +1,4 @@
+{
+  "name": "Gilbert Consulting",
+  "summary_template": "# Compte-rendu Gilbert Consulting - {meeting_title}\n\n## Points clés\n\n{transcript_text}\n\n## Conclusion\n\nCe compte-rendu a été généré automatiquement par l'application de transcription Gilbert Consulting. Pour toute question, veuillez contacter votre conseiller."
+}

@@ -63,3 +63,4 @@ htmlcov/
 firebase-*.json
 *-firebase-*.json
 secret*.json
+audio_3h.mp3
