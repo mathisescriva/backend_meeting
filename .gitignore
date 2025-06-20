@@ -64,3 +64,9 @@ firebase-*.json
 *-firebase-*.json
 secret*.json
 audio_3h.mp3
+
+# Database backups and dumps
+*.backup
+database_dump.sql
+*.db-shm
+*.db-wal
