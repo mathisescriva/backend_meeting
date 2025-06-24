@@ -9,9 +9,16 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
 
+class UserCreateOAuth(UserBase):
+    """Modèle pour la création d'utilisateur via OAuth (sans mot de passe)"""
+    oauth_provider: str
+    oauth_id: str
+
 class User(UserBase):
     id: str
     created_at: Optional[str] = None
+    oauth_provider: Optional[str] = None
+    oauth_id: Optional[str] = None
 
     class Config:
         orm_mode = True

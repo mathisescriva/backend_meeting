@@ -1,17 +1,34 @@
-from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, Body
+from datetime import timedelta, datetime
+from fastapi import APIRouter, Depends, HTTPException, Body, Request
 from fastapi.security import OAuth2PasswordRequestForm
-from ..db.database import get_user_by_email_cached, create_user, get_password_hash, purge_old_entries_from_cache
-from ..models.user import UserCreate, User
+from fastapi.responses import RedirectResponse
+from ..db.database import get_user_by_email_cached, create_user, get_password_hash, purge_old_entries_from_cache, get_user_by_oauth
+from ..models.user import UserCreate, User, UserCreateOAuth
 from ..core.security import create_access_token, verify_password, get_current_user, purge_password_cache
 from ..core.config import settings
 from pydantic import BaseModel
+import httpx
+import secrets
+import urllib.parse
+from typing import Optional
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+# Configuration Google OAuth
+GOOGLE_CLIENT_ID = settings.GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET = settings.GOOGLE_CLIENT_SECRET
+GOOGLE_REDIRECT_URI = settings.GOOGLE_REDIRECT_URI
+
+# Stockage temporaire des états OAuth (dans un environnement de production, utilisez Redis)
+oauth_states = {}
 
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+class GoogleCallbackRequest(BaseModel):
+    code: str
+    state: str
 
 @router.post("/register", response_model=dict, status_code=201, tags=["Authentication"])
 async def register(user_data: UserCreate = Body(..., description="Informations de l'utilisateur à créer")):
@@ -232,3 +249,136 @@ async def refresh_token(current_user: dict = Depends(get_current_user)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors du rafraîchissement du token: {str(e)}")
+
+@router.get("/google/login", tags=["Authentication"])
+async def google_login():
+    """
+    Initie le processus de connexion Google OAuth.
+    
+    Redirige l'utilisateur vers la page d'autorisation Google.
+    
+    Retourne une URL de redirection vers Google OAuth.
+    """
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="Configuration Google OAuth manquante")
+    
+    # Générer un état unique pour la sécurité
+    state = secrets.token_urlsafe(32)
+    oauth_states[state] = {"timestamp": datetime.now()}
+    
+    # Paramètres OAuth Google
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "scope": "openid email profile",
+        "response_type": "code",
+        "state": state,
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+    
+    google_auth_url = "https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params)
+    
+    return {"auth_url": google_auth_url, "state": state}
+
+@router.get("/google/callback", tags=["Authentication"])
+async def google_callback_get(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    """
+    Traite le callback GET de Google OAuth après autorisation.
+    
+    Google redirige ici avec les paramètres code et state.
+    Traite l'authentification et redirige vers le frontend avec le token.
+    """
+    try:
+        # Vérifier s'il y a eu une erreur
+        if error:
+            return RedirectResponse(url=f"http://localhost:5173/auth/callback?error={error}")
+        
+        # Vérifier que code et state sont présents
+        if not code or not state:
+            return RedirectResponse(url="http://localhost:5173/auth/callback?error=missing_parameters")
+        
+        # Vérifier l'état de sécurité
+        if state not in oauth_states:
+            return RedirectResponse(url="http://localhost:5173/auth/callback?error=invalid_state")
+        
+        # Nettoyer l'état utilisé
+        del oauth_states[state]
+        
+        # Échanger le code contre un token d'accès
+        token_data = {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": GOOGLE_REDIRECT_URI
+        }
+        
+        async with httpx.AsyncClient() as client:
+            # Obtenir le token d'accès
+            token_response = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data=token_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            
+            if token_response.status_code != 200:
+                return RedirectResponse(url="http://localhost:5173/auth/callback?error=token_exchange_failed")
+            
+            tokens = token_response.json()
+            access_token = tokens.get("access_token")
+            
+            # Obtenir les informations utilisateur
+            user_response = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            
+            if user_response.status_code != 200:
+                return RedirectResponse(url="http://localhost:5173/auth/callback?error=user_info_failed")
+            
+            google_user = user_response.json()
+        
+        # Vérifier si l'utilisateur existe déjà par OAuth
+        existing_user = get_user_by_oauth("google", google_user["id"])
+        
+        if existing_user:
+            # Utilisateur existant, créer un token JWT
+            user = existing_user
+        else:
+            # Vérifier si un utilisateur avec cet email existe déjà (compte classique)
+            existing_email_user = get_user_by_email_cached(google_user["email"])
+            
+            if existing_email_user and not existing_email_user.get("oauth_provider"):
+                return RedirectResponse(url="http://localhost:5173/auth/callback?error=email_already_exists")
+            elif existing_email_user:
+                # Utilisateur OAuth existant avec un autre provider
+                return RedirectResponse(url="http://localhost:5173/auth/callback?error=email_exists_other_provider")
+            
+            # Créer un nouveau compte utilisateur
+            user_data = {
+                "email": google_user["email"],
+                "full_name": google_user.get("name", ""),
+                "profile_picture_url": google_user.get("picture", ""),
+                "oauth_provider": "google",
+                "oauth_id": google_user["id"]
+            }
+            
+            user = create_user(user_data)
+        
+        # Créer le token JWT
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        jwt_token = create_access_token(
+            data={"sub": user["id"]},
+            expires_delta=access_token_expires
+        )
+        
+        # Purger les caches
+        purge_old_entries_from_cache()
+        purge_password_cache()
+        
+        # Rediriger vers le frontend avec le token
+        return RedirectResponse(url=f"http://localhost:5173/auth/callback?token={jwt_token}", status_code=302)
+        
+    except Exception as e:
+        return RedirectResponse(url=f"http://localhost:5173/auth/callback?error=server_error", status_code=302)

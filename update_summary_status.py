@@ -116,43 +116,61 @@ def generate_summary_for_meeting(meeting_id, user_id):
         # Importer les modules nécessaires
         sys.path.append(str(CURRENT_DIR))
         from app.services.mistral_summary import generate_meeting_summary, process_meeting_summary
-        from app.db.queries import get_meeting, update_meeting
+        from app.db.queries import get_meeting, update_meeting, get_meeting_speakers
+        from app.services.transcription_checker import get_assemblyai_transcript_details, replace_speaker_names_in_text
         
-        # Récupérer les informations de la réunion
+        # Récupérer les données de la réunion
         meeting = get_meeting(meeting_id, user_id)
-        
         if not meeting:
             logger.error(f"Réunion {meeting_id} non trouvée pour l'utilisateur {user_id}")
             return False
-            
-        # Vérifier que la transcription est disponible
-        if not meeting.get("transcript_text") or meeting.get("transcript_status") != "completed":
-            logger.error(f"La transcription n'est pas disponible pour la réunion {meeting_id}")
-            update_summary_status(meeting_id, user_id, "error", "La transcription n'est pas disponible")
+        
+        # Vérifier que nous avons une transcription
+        transcript_text = meeting.get("transcript_text")
+        if not transcript_text:
+            logger.error(f"Aucune transcription disponible pour la réunion {meeting_id}")
             return False
         
-        # Générer directement le compte rendu sans passer par un thread
-        transcript_text = meeting["transcript_text"]
-        meeting_title = meeting.get("title")
-        client_id = meeting.get("client_id")
+        # Récupérer les noms personnalisés des locuteurs
+        speakers_data = get_meeting_speakers(meeting_id, user_id)
+        speaker_names = {}
+        if speakers_data:
+            for speaker in speakers_data:
+                speaker_names[speaker['speaker_id']] = speaker['custom_name']
+            logger.info(f"Noms personnalisés des locuteurs récupérés: {speaker_names}")
         
+        # Utiliser la transcription avec les noms personnalisés si disponibles
+        if speaker_names:
+            formatted_transcript = replace_speaker_names_in_text(transcript_text, speaker_names)
+            logger.info("Transcription formatée avec les noms personnalisés")
+        else:
+            formatted_transcript = transcript_text
+            logger.info("Aucun nom personnalisé trouvé, utilisation de la transcription originale")
+        
+        # Générer le compte rendu avec la transcription formatée
         logger.info(f"Génération du compte rendu pour la réunion {meeting_id}")
-        summary = generate_meeting_summary(transcript_text, meeting_title, client_id, user_id)
+        summary_text = generate_meeting_summary(formatted_transcript, meeting.get("title", "Réunion"))
         
-        if summary:
-            # Mettre à jour la réunion avec le compte rendu
-            update_summary_status(meeting_id, user_id, "completed", summary)
-            logger.info(f"Compte rendu généré et enregistré pour la réunion {meeting_id}")
+        if summary_text:
+            # Mettre à jour la base de données avec le compte rendu
+            update_meeting(meeting_id, user_id, {
+                "summary_text": summary_text,
+                "summary_status": "completed"
+            })
+            logger.info(f"✅ Compte rendu généré avec succès pour la réunion {meeting_id}")
             return True
         else:
-            # Mettre à jour le statut en cas d'erreur
-            update_summary_status(meeting_id, user_id, "error", "Erreur lors de la génération du compte rendu")
-            logger.error(f"Échec de la génération du compte rendu pour la réunion {meeting_id}")
+            # Marquer comme erreur
+            update_meeting(meeting_id, user_id, {"summary_status": "error"})
+            logger.error(f"❌ Échec de la génération du compte rendu pour la réunion {meeting_id}")
             return False
-            
+    
     except Exception as e:
-        logger.error(f"Erreur lors de la génération du compte rendu: {str(e)}")
-        update_summary_status(meeting_id, user_id, "error", f"Erreur lors de la génération: {str(e)}")
+        logger.error(f"❌ Erreur lors de la génération du compte rendu pour la réunion {meeting_id}: {str(e)}")
+        try:
+            update_meeting(meeting_id, user_id, {"summary_status": "error"})
+        except:
+            pass
         return False
 
 def main():

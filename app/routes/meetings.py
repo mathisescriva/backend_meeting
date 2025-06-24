@@ -334,28 +334,22 @@ async def generate_meeting_summary_route(
             }
         )
     
-    # Démarrer la génération du compte rendu
-    try:
-        # Mettre à jour le statut pour indiquer que la génération est en cours
-        update_meeting(meeting_id, current_user["id"], {"summary_status": "processing"})
-        
-        # Lancer le processus de génération du compte rendu en mode asynchrone
-        process_meeting_summary(meeting_id, current_user["id"], async_mode=True)
-        
+    # Lancer le processus de génération du compte rendu en mode synchrone
+    success = process_meeting_summary(meeting_id, current_user["id"])
+    
+    if success:
         # Récupérer la réunion mise à jour
         updated_meeting = get_meeting(meeting_id, current_user["id"])
         
         return {
-            "message": "Génération du compte rendu en cours",
+            "message": "Compte rendu généré avec succès",
             "meeting": updated_meeting
         }
-    except Exception as e:
-        logger.error(f"Erreur lors du démarrage de la génération du compte rendu: {str(e)}")
+    else:
         raise HTTPException(
             status_code=500,
             detail={
-                "message": "Erreur lors du démarrage de la génération du compte rendu",
-                "error": str(e),
+                "message": "Erreur lors de la génération du compte rendu",
                 "type": "SUMMARY_GENERATION_ERROR"
             }
         )

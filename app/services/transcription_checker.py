@@ -184,3 +184,28 @@ def format_transcript_text(transcript_data: Dict[str, Any], speaker_names: Optio
             logger.warning(f"Utterance vide pour {speaker_name} (speaker_id: {speaker_id})")
     
     return "\n".join(formatted_text)
+
+def replace_speaker_names_in_text(transcript_text: str, speaker_names: Dict[str, str]) -> str:
+    """
+    Remplace les noms des locuteurs dans un texte de transcription déjà formaté.
+    
+    Args:
+        transcript_text: Texte de transcription formaté (ex: "Speaker A: Bonjour...")
+        speaker_names: Dictionnaire des noms personnalisés {speaker_id: custom_name}
+        
+    Returns:
+        Texte avec les noms des locuteurs remplacés
+    """
+    if not speaker_names:
+        return transcript_text
+    
+    formatted_text = transcript_text
+    
+    # Remplacer chaque nom de locuteur
+    for speaker_id, custom_name in speaker_names.items():
+        # Remplacer les occurrences du type "Speaker A:" par "Custom Name:"
+        formatted_text = formatted_text.replace(f"{speaker_id}:", f"{custom_name}:")
+        
+        logger.debug(f"Replaced '{speaker_id}:' with '{custom_name}:' in transcript")
+    
+    return formatted_text

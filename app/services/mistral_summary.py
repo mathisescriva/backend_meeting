@@ -207,118 +207,67 @@ def process_meeting_summary(meeting_id: str, user_id: str, client_id: Optional[s
     Returns:
         bool: True si le traitement a réussi, False sinon
     """
-    from ..db.queries import get_meeting, update_meeting
-    import os
-    from pathlib import Path
+    from ..db.queries import get_meeting, update_meeting, get_meeting_speakers
+    from ..services.transcription_checker import get_assemblyai_transcript_details, replace_speaker_names_in_text
     
     try:
-        # Récupérer les informations de la réunion
+        # Récupérer les données de la réunion
         meeting = get_meeting(meeting_id, user_id)
-        
         if not meeting:
             logger.error(f"Réunion {meeting_id} non trouvée pour l'utilisateur {user_id}")
             return False
-            
-        # Vérifier que la transcription est disponible
-        if not meeting.get("transcript_text") or meeting.get("transcript_status") != "completed":
-            logger.error(f"La transcription n'est pas disponible pour la réunion {meeting_id}")
-            update_meeting(meeting_id, user_id, {"summary_status": "error", "summary_text": "La transcription n'est pas disponible"})
-            return False
-            
-        # Récupérer le client_id depuis la réunion si pas fourni en paramètre
-        if not client_id and "client_id" in meeting:
-            client_id = meeting.get("client_id")
-            
-        # Mettre à jour le statut pour indiquer que la génération est en cours
-        update_data = {"summary_status": "processing"}
-        if client_id:
-            update_data["client_id"] = client_id
-        update_meeting(meeting_id, user_id, update_data)
         
-        # Si mode asynchrone, retourner immédiatement après avoir mis à jour le statut
+        # Vérifier que nous avons une transcription
+        transcript_text = meeting.get("transcript_text")
+        if not transcript_text:
+            logger.error(f"Aucune transcription disponible pour la réunion {meeting_id}")
+            return False
+        
+        # Récupérer les noms personnalisés des locuteurs
+        speakers_data = get_meeting_speakers(meeting_id, user_id)
+        speaker_names = {}
+        if speakers_data:
+            for speaker in speakers_data:
+                speaker_names[speaker['speaker_id']] = speaker['custom_name']
+            logger.info(f"Noms personnalisés des locuteurs récupérés: {speaker_names}")
+        
+        # Utiliser la transcription avec les noms personnalisés si disponibles
+        if speaker_names:
+            formatted_transcript = replace_speaker_names_in_text(transcript_text, speaker_names)
+            logger.info("Transcription formatée avec les noms personnalisés")
+        else:
+            formatted_transcript = transcript_text
+            logger.info("Aucun nom personnalisé trouvé, utilisation de la transcription originale")
+        
+        # Mettre à jour le statut en "processing"
+        update_meeting(meeting_id, user_id, {"summary_status": "processing"})
+        
         if async_mode:
-            # Lancer le processus en arrière-plan via le script update_summary_status.py
-            import subprocess
-            import sys
-            
-            # Chemin du script
-            script_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "update_summary_status.py"
-            
-            if os.path.exists(script_path):
-                # Lancer le script en arrière-plan
-                subprocess.Popen(
-                    [sys.executable, str(script_path)],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-                logger.info(f"Script de mise à jour des comptes rendus lancé en arrière-plan pour la réunion {meeting_id}")
-            else:
-                logger.warning(f"Script de mise à jour des comptes rendus non trouvé: {script_path}")
-            
+            logger.info(f"Mode asynchrone activé pour la réunion {meeting_id}, statut mis à jour")
             return True
         
-        # Sinon, générer directement le compte rendu
-        transcript_text = meeting["transcript_text"]
-        meeting_title = meeting.get("title")
+        # Générer le compte rendu avec la transcription formatée
+        logger.info(f"Génération du compte rendu pour la réunion {meeting_id}")
+        summary_text = generate_meeting_summary(formatted_transcript, meeting.get("title", "Réunion"), client_id)
         
-        # Générer le compte rendu
-        logger.info(f"Génération directe du compte rendu pour la réunion {meeting_id}")
-        summary = generate_meeting_summary(transcript_text, meeting_title, client_id, user_id)
-        
-        if summary:
-            # Déterminer le chemin de la base de données (prendre en compte Render)
-            RENDER_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "/data")
-            ON_RENDER = os.path.exists(RENDER_DISK_PATH)
-            
-            if ON_RENDER:
-                db_path = Path(RENDER_DISK_PATH) / "app.db"
-                logger.info(f"Utilisation de la base de données sur le disque persistant: {db_path}")
-            else:
-                db_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "app.db"
-                logger.info(f"Utilisation de la base de données locale: {db_path}")
-            
-            # Mise à jour directe de la base de données
-            import sqlite3
-            
-            # Créer une nouvelle connexion
-            conn = sqlite3.connect(str(db_path))
-            cursor = conn.cursor()
-            
-            try:
-                # Mettre à jour la réunion avec le compte rendu
-                cursor.execute(
-                    "UPDATE meetings SET summary_text = ?, summary_status = ? WHERE id = ? AND user_id = ?",
-                    (summary, "completed", meeting_id, user_id)
-                )
-                conn.commit()
-                logger.info(f"Compte rendu généré et enregistré pour la réunion {meeting_id}")
-            except Exception as db_error:
-                logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
-                return False
-            finally:
-                # Fermer la connexion
-                cursor.close()
-                conn.close()
-            
+        if summary_text:
+            # Mettre à jour la base de données avec le compte rendu
+            update_meeting(meeting_id, user_id, {
+                "summary_text": summary_text,
+                "summary_status": "completed"
+            })
+            logger.info(f"Compte rendu généré avec succès pour la réunion {meeting_id}")
             return True
         else:
-            # Mise à jour en cas d'erreur
-            update_meeting(meeting_id, user_id, {
-                "summary_status": "error",
-                "summary_text": "Erreur lors de la génération du compte rendu"
-            })
-            
+            # Marquer comme erreur
+            update_meeting(meeting_id, user_id, {"summary_status": "error"})
             logger.error(f"Échec de la génération du compte rendu pour la réunion {meeting_id}")
             return False
-        
+    
     except Exception as e:
-        logger.error(f"Erreur lors du traitement du compte rendu: {str(e)}")
+        logger.error(f"Erreur lors du traitement du compte rendu pour la réunion {meeting_id}: {str(e)}")
         try:
-            update_meeting(meeting_id, user_id, {
-                "summary_status": "error",
-                "summary_text": f"Erreur lors du traitement: {str(e)}"
-            })
-        except Exception as db_error:
-            logger.error(f"Erreur lors de la mise à jour de la base de données: {str(db_error)}")
+            update_meeting(meeting_id, user_id, {"summary_status": "error"})
+        except:
+            pass
         return False

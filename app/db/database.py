@@ -102,22 +102,48 @@ def init_db():
             CREATE TABLE users (
                 id TEXT PRIMARY KEY,
                 email TEXT UNIQUE NOT NULL,
-                hashed_password TEXT NOT NULL,
+                hashed_password TEXT,
                 full_name TEXT,
                 profile_picture_url TEXT,
+                oauth_provider TEXT,
+                oauth_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """)
             cursor.execute("CREATE INDEX idx_user_email ON users(email)")
+            cursor.execute("CREATE INDEX idx_user_oauth ON users(oauth_provider, oauth_id)")
             
         else:
-            # Vérifier si la colonne profile_picture_url existe déjà
+            # Vérifier les colonnes existantes
             cursor.execute("PRAGMA table_info(users)")
             columns = [column[1] for column in cursor.fetchall()]
             
             if 'profile_picture_url' not in columns:
                 cursor.execute("ALTER TABLE users ADD COLUMN profile_picture_url TEXT")
                 print("Colonne profile_picture_url ajoutée à la table users")
+                
+            if 'oauth_provider' not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN oauth_provider TEXT")
+                print("Colonne oauth_provider ajoutée à la table users")
+                
+            if 'oauth_id' not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN oauth_id TEXT")
+                print("Colonne oauth_id ajoutée à la table users")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_oauth ON users(oauth_provider, oauth_id)")
+                
+            # Modifier la colonne hashed_password pour qu'elle soit nullable (pour les utilisateurs OAuth)
+            # SQLite ne supporte pas ALTER COLUMN, on doit recréer la table si nécessaire
+            cursor.execute("PRAGMA table_info(users)")
+            columns_info = cursor.fetchall()
+            hashed_password_nullable = False
+            for col in columns_info:
+                if col[1] == 'hashed_password' and col[3] == 0:  # col[3] est notnull (0 = nullable, 1 = not null)
+                    hashed_password_nullable = True
+                    break
+            
+            if not hashed_password_nullable:
+                print("La colonne hashed_password doit être rendue nullable pour les utilisateurs OAuth")
+                print("Veuillez exécuter une migration si nécessaire")
         
         # Création de la table meetings
         cursor.execute('''
@@ -200,19 +226,25 @@ def init_db():
             release_db_connection(conn)
 
 def create_user(user_data):
-    """Créer un nouvel utilisateur"""
+    """Créer un nouvel utilisateur (classique ou OAuth)"""
     user_id = str(uuid.uuid4())
     email = user_data.get("email")
-    hashed_password = user_data.get("hashed_password")
+    hashed_password = user_data.get("hashed_password")  # Peut être None pour OAuth
     full_name = user_data.get("full_name")
+    profile_picture_url = user_data.get("profile_picture_url")
+    oauth_provider = user_data.get("oauth_provider")
+    oauth_id = user_data.get("oauth_id")
     created_at = datetime.utcnow().isoformat()
     
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO users (id, email, hashed_password, full_name, created_at) VALUES (?, ?, ?, ?, ?)",
-            (user_id, email, hashed_password, full_name, created_at)
+            """INSERT INTO users (id, email, hashed_password, full_name, profile_picture_url, 
+               oauth_provider, oauth_id, created_at) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, email, hashed_password, full_name, profile_picture_url, 
+             oauth_provider, oauth_id, created_at)
         )
         conn.commit()
         
@@ -220,6 +252,9 @@ def create_user(user_data):
             "id": user_id,
             "email": email,
             "full_name": full_name,
+            "profile_picture_url": profile_picture_url,
+            "oauth_provider": oauth_provider,
+            "oauth_id": oauth_id,
             "created_at": created_at
         }
     finally:
@@ -344,6 +379,23 @@ def purge_old_entries_from_cache(max_age_seconds=600):
         k: v for k, v in user_cache.items() 
         if current_time - v[0] < max_age_seconds
     }
+
+def get_user_by_oauth(oauth_provider, oauth_id):
+    """Récupérer un utilisateur par ses identifiants OAuth"""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM users WHERE oauth_provider = ? AND oauth_id = ?", 
+            (oauth_provider, oauth_id)
+        )
+        user = cursor.fetchone()
+        
+        if user:
+            return dict(user)
+        return None
+    finally:
+        release_db_connection(conn)
 
 # Initialiser la base de données au démarrage
 init_db()
