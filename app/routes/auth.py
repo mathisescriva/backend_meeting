@@ -13,6 +13,7 @@ import secrets
 import urllib.parse
 from typing import Optional
 import time
+import logging
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -289,18 +290,34 @@ async def google_callback(request: Request, code: Optional[str] = None, state: O
     """
     frontend_url = settings.FRONTEND_URL
     
+    # Debug logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"OAuth callback appelé - code: {'présent' if code else 'absent'}, state: {state[:8] if state else 'absent'}, error: {error}")
+    
     try:
         # Vérifier s'il y a eu une erreur
         if error:
+            logger.info(f"Erreur OAuth reçue: {error}")
             return RedirectResponse(url=f"{frontend_url}?error={error}")
         
         # Vérifier que code et state sont présents
         if not code or not state:
+            logger.warning("Code ou state manquant dans le callback OAuth")
             return RedirectResponse(url=f"{frontend_url}?error=missing_params")
         
+        # Debug: vérifier les états actifs
+        states_count = oauth_state_manager.get_states_count()
+        logger.info(f"États OAuth actifs avant validation: {states_count}")
+        
         # Vérifier l'état de sécurité via le gestionnaire d'états
-        if not oauth_state_manager.validate_state(state):
+        is_valid = oauth_state_manager.validate_state(state)
+        logger.info(f"Validation de l'état OAuth {state[:8]}...: {is_valid}")
+        
+        if not is_valid:
+            logger.warning(f"État OAuth invalide: {state[:8]}...")
             return RedirectResponse(url=f"{frontend_url}?error=invalid_state")
+        
+        logger.info("État OAuth validé avec succès, échange du code contre token...")
         
         # Échanger le code contre un token d'accès
         token_data = {
@@ -320,6 +337,7 @@ async def google_callback(request: Request, code: Optional[str] = None, state: O
             )
             
             if token_response.status_code != 200:
+                logger.error(f"Échec de l'échange de token: {token_response.status_code}")
                 return RedirectResponse(url=f"{frontend_url}?error=token_exchange_failed")
             
             tokens = token_response.json()
@@ -332,9 +350,12 @@ async def google_callback(request: Request, code: Optional[str] = None, state: O
             )
             
             if user_response.status_code != 200:
+                logger.error(f"Échec de récupération des infos utilisateur: {user_response.status_code}")
                 return RedirectResponse(url=f"{frontend_url}?error=user_info_failed")
             
             google_user = user_response.json()
+        
+        logger.info(f"Informations utilisateur Google récupérées pour: {google_user.get('email', 'email_unknown')}")
         
         # Vérifier si l'utilisateur existe déjà par OAuth
         existing_user = get_user_by_oauth("google", google_user["id"])
@@ -342,14 +363,17 @@ async def google_callback(request: Request, code: Optional[str] = None, state: O
         if existing_user:
             # Utilisateur existant, créer un token JWT
             user = existing_user
+            logger.info(f"Utilisateur OAuth existant trouvé: {user.get('email', 'email_unknown')}")
         else:
             # Vérifier si un utilisateur avec cet email existe déjà (compte classique)
             existing_email_user = get_user_by_email_cached(google_user["email"])
             
             if existing_email_user and not existing_email_user.get("oauth_provider"):
+                logger.warning(f"Email déjà utilisé avec compte classique: {google_user['email']}")
                 return RedirectResponse(url=f"{frontend_url}?error=email_already_exists")
             elif existing_email_user:
                 # Utilisateur OAuth existant avec un autre provider
+                logger.warning(f"Email déjà utilisé avec autre provider: {google_user['email']}")
                 return RedirectResponse(url=f"{frontend_url}?error=email_exists_other_provider")
             
             # Créer un nouveau compte utilisateur
@@ -362,6 +386,7 @@ async def google_callback(request: Request, code: Optional[str] = None, state: O
             }
             
             user = create_user(user_data)
+            logger.info(f"Nouvel utilisateur OAuth créé: {user.get('email', 'email_unknown')}")
         
         # Créer le token JWT
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -374,10 +399,13 @@ async def google_callback(request: Request, code: Optional[str] = None, state: O
         purge_old_entries_from_cache()
         purge_password_cache()
         
+        logger.info(f"Token JWT créé avec succès pour l'utilisateur: {user.get('email', 'email_unknown')}")
+        
         # Rediriger vers le frontend avec le token
         return RedirectResponse(url=f"{frontend_url}?token={jwt_token}&success=true", status_code=302)
         
     except Exception as e:
+        logger.error(f"Erreur dans le callback OAuth: {str(e)}")
         return RedirectResponse(url=f"{frontend_url}?error=server_error", status_code=302)
 
 @router.get("/google/login", tags=["Authentication"])
