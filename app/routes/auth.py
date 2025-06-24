@@ -6,11 +6,13 @@ from ..db.database import get_user_by_email_cached, create_user, get_password_ha
 from ..models.user import UserCreate, User, UserCreateOAuth
 from ..core.security import create_access_token, verify_password, get_current_user, purge_password_cache
 from ..core.config import settings
+from ..services.oauth_state_manager import oauth_state_manager
 from pydantic import BaseModel
 import httpx
 import secrets
 import urllib.parse
 from typing import Optional
+import time
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -18,9 +20,6 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 GOOGLE_CLIENT_ID = settings.GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET = settings.GOOGLE_CLIENT_SECRET
 GOOGLE_REDIRECT_URI = settings.GOOGLE_REDIRECT_URI
-
-# Stockage temporaire des états OAuth (dans un environnement de production, utilisez Redis)
-oauth_states = {}
 
 class LoginRequest(BaseModel):
     email: str
@@ -250,21 +249,19 @@ async def refresh_token(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors du rafraîchissement du token: {str(e)}")
 
-@router.get("/google/login", tags=["Authentication"])
-async def google_login():
+@router.get("/google", tags=["Authentication"])
+async def google_auth():
     """
     Initie le processus de connexion Google OAuth.
     
-    Redirige l'utilisateur vers la page d'autorisation Google.
-    
-    Retourne une URL de redirection vers Google OAuth.
+    Génère un état unique et redirige directement vers Google OAuth.
+    Cette route remplace l'ancien endpoint /google/login pour un flow plus simple.
     """
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise HTTPException(status_code=500, detail="Configuration Google OAuth manquante")
     
-    # Générer un état unique pour la sécurité
-    state = secrets.token_urlsafe(32)
-    oauth_states[state] = {"timestamp": datetime.now()}
+    # Générer un état unique pour la sécurité via le gestionnaire d'états
+    state = oauth_state_manager.generate_state()
     
     # Paramètres OAuth Google
     params = {
@@ -274,36 +271,36 @@ async def google_login():
         "response_type": "code",
         "state": state,
         "access_type": "offline",
-        "prompt": "consent"
+        "prompt": "select_account"
     }
     
-    google_auth_url = "https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params)
+    google_auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
     
-    return {"auth_url": google_auth_url, "state": state}
+    # Redirection directe vers Google
+    return RedirectResponse(url=google_auth_url, status_code=302)
 
 @router.get("/google/callback", tags=["Authentication"])
-async def google_callback_get(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+async def google_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
     """
-    Traite le callback GET de Google OAuth après autorisation.
+    Traite le callback de Google OAuth après autorisation.
     
     Google redirige ici avec les paramètres code et state.
-    Traite l'authentification et redirige vers le frontend avec le token.
+    Traite l'authentification complète et redirige vers le frontend avec le token.
     """
+    frontend_url = settings.FRONTEND_URL
+    
     try:
         # Vérifier s'il y a eu une erreur
         if error:
-            return RedirectResponse(url=f"http://localhost:5173/auth/callback?error={error}")
+            return RedirectResponse(url=f"{frontend_url}?error={error}")
         
         # Vérifier que code et state sont présents
         if not code or not state:
-            return RedirectResponse(url="http://localhost:5173/auth/callback?error=missing_parameters")
+            return RedirectResponse(url=f"{frontend_url}?error=missing_params")
         
-        # Vérifier l'état de sécurité
-        if state not in oauth_states:
-            return RedirectResponse(url="http://localhost:5173/auth/callback?error=invalid_state")
-        
-        # Nettoyer l'état utilisé
-        del oauth_states[state]
+        # Vérifier l'état de sécurité via le gestionnaire d'états
+        if not oauth_state_manager.validate_state(state):
+            return RedirectResponse(url=f"{frontend_url}?error=invalid_state")
         
         # Échanger le code contre un token d'accès
         token_data = {
@@ -323,7 +320,7 @@ async def google_callback_get(request: Request, code: Optional[str] = None, stat
             )
             
             if token_response.status_code != 200:
-                return RedirectResponse(url="http://localhost:5173/auth/callback?error=token_exchange_failed")
+                return RedirectResponse(url=f"{frontend_url}?error=token_exchange_failed")
             
             tokens = token_response.json()
             access_token = tokens.get("access_token")
@@ -335,7 +332,7 @@ async def google_callback_get(request: Request, code: Optional[str] = None, stat
             )
             
             if user_response.status_code != 200:
-                return RedirectResponse(url="http://localhost:5173/auth/callback?error=user_info_failed")
+                return RedirectResponse(url=f"{frontend_url}?error=user_info_failed")
             
             google_user = user_response.json()
         
@@ -350,10 +347,10 @@ async def google_callback_get(request: Request, code: Optional[str] = None, stat
             existing_email_user = get_user_by_email_cached(google_user["email"])
             
             if existing_email_user and not existing_email_user.get("oauth_provider"):
-                return RedirectResponse(url="http://localhost:5173/auth/callback?error=email_already_exists")
+                return RedirectResponse(url=f"{frontend_url}?error=email_already_exists")
             elif existing_email_user:
                 # Utilisateur OAuth existant avec un autre provider
-                return RedirectResponse(url="http://localhost:5173/auth/callback?error=email_exists_other_provider")
+                return RedirectResponse(url=f"{frontend_url}?error=email_exists_other_provider")
             
             # Créer un nouveau compte utilisateur
             user_data = {
@@ -378,7 +375,17 @@ async def google_callback_get(request: Request, code: Optional[str] = None, stat
         purge_password_cache()
         
         # Rediriger vers le frontend avec le token
-        return RedirectResponse(url=f"http://localhost:5173/auth/callback?token={jwt_token}", status_code=302)
+        return RedirectResponse(url=f"{frontend_url}?token={jwt_token}&success=true", status_code=302)
         
     except Exception as e:
-        return RedirectResponse(url=f"http://localhost:5173/auth/callback?error=server_error", status_code=302)
+        return RedirectResponse(url=f"{frontend_url}?error=server_error", status_code=302)
+
+@router.get("/google/login", tags=["Authentication"])
+async def google_login():
+    """
+    DEPRECATED: Utilisez /auth/google à la place.
+    
+    Ancienne méthode qui retournait une URL JSON.
+    Maintenant redirige vers la nouvelle méthode pour compatibilité.
+    """
+    return RedirectResponse(url="/auth/google", status_code=302)

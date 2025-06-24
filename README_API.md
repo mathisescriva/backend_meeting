@@ -39,7 +39,7 @@ cp .env.example .env
 # Éditer le fichier .env pour ajouter votre clé API AssemblyAI
 ```
 
-### Démarrage du serveur
+### Démarrage du serveur 
 
 ```bash
 uvicorn app.main:app --reload --port 8001
@@ -216,6 +216,187 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
   "created_at": "2025-05-19T16:05:57.744623",
   "profile_picture_url": null
 }
+```
+
+## Authentification Google OAuth
+
+L'API propose une authentification Google OAuth complète pour permettre aux utilisateurs de se connecter avec leur compte Google sans créer de mot de passe.
+
+### Architecture OAuth
+
+Le flow OAuth est entièrement géré côté backend pour éviter les problèmes de sécurité et de session. Le processus est le suivant :
+
+1. **Redirection initiale** : L'utilisateur est redirigé vers Google OAuth
+2. **Authentification Google** : L'utilisateur s'authentifie sur Google
+3. **Callback automatique** : Google redirige vers le backend avec un code
+4. **Traitement backend** : Le backend échange le code contre un token et crée/récupère l'utilisateur
+5. **Retour frontend** : Redirection vers le frontend avec le token JWT
+
+### Authentification Google OAuth
+
+```
+GET /auth/google
+```
+
+**Description** : Initie le processus d'authentification Google OAuth. Redirige directement vers Google.
+
+**Paramètres** : Aucun
+
+**Utilisation côté frontend** :
+```javascript
+// Simple redirection vers l'endpoint OAuth
+window.location.href = 'http://localhost:8001/auth/google'
+```
+
+**Réponse** : Redirection HTTP 302 vers Google OAuth
+
+### Callback Google OAuth
+
+```
+GET /auth/google/callback
+```
+
+**Description** : Endpoint de callback utilisé par Google après authentification. **Ne pas appeler directement.**
+
+**Paramètres de requête automatiques** :
+- `code` : Code d'autorisation fourni par Google
+- `state` : État de sécurité pour prévenir les attaques CSRF
+- `error` (optionnel) : Erreur si l'authentification a échoué
+
+**Réponse** : Redirection vers le frontend avec le token JWT
+
+### Gestion du retour côté frontend
+
+Après l'authentification Google, l'utilisateur est redirigé vers votre frontend avec les paramètres suivants :
+
+#### Authentification réussie
+```
+https://votre-frontend.com/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...&success=true
+```
+
+#### Authentification échouée
+```
+https://votre-frontend.com/?error=invalid_state
+```
+
+### Code JavaScript d'intégration
+
+```javascript
+// 1. Initier l'authentification Google
+function loginWithGoogle() {
+    window.location.href = 'http://localhost:8001/auth/google'
+}
+
+// 2. Gérer le retour de l'authentification
+function handleAuthCallback() {
+    const urlParams = new URLSearchParams(window.location.search)
+    const token = urlParams.get('token')
+    const success = urlParams.get('success')
+    const error = urlParams.get('error')
+    
+    if (success && token) {
+        // Authentification réussie
+        localStorage.setItem('access_token', token)
+        
+        // Nettoyer l'URL
+        window.history.replaceState({}, document.title, window.location.pathname)
+        
+        // Rediriger vers l'application
+        window.location.href = '/dashboard'
+        
+    } else if (error) {
+        // Gérer les erreurs
+        handleAuthError(error)
+    }
+}
+
+// 3. Gérer les erreurs d'authentification
+function handleAuthError(error) {
+    const errorMessages = {
+        'invalid_state': 'Session expirée, veuillez réessayer',
+        'missing_params': 'Paramètres manquants, veuillez réessayer',
+        'token_exchange_failed': 'Erreur lors de l\'échange de token',
+        'user_info_failed': 'Impossible de récupérer les informations utilisateur',
+        'email_already_exists': 'Un compte existe déjà avec cet email',
+        'email_exists_other_provider': 'Cet email est associé à un autre fournisseur',
+        'server_error': 'Erreur serveur, veuillez réessayer'
+    }
+    
+    const message = errorMessages[error] || 'Erreur d\'authentification inconnue'
+    alert(message) // Remplacez par votre système de notifications
+}
+
+// 4. Appeler au chargement de la page
+document.addEventListener('DOMContentLoaded', handleAuthCallback)
+```
+
+### Configuration des variables d'environnement
+
+Configurez les variables suivantes dans votre fichier `.env` :
+
+```env
+# Configuration Google OAuth
+GOOGLE_CLIENT_ID=votre_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=votre_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:8001/auth/google/callback
+FRONTEND_URL=http://localhost:5173
+
+# Pour la production
+GOOGLE_REDIRECT_URI=https://backend-meeting.onrender.com/auth/google/callback
+FRONTEND_URL=https://votre-frontend.com
+```
+
+### Configuration Google Cloud Console
+
+1. **Créer un projet** sur [Google Cloud Console](https://console.cloud.google.com/)
+2. **Activer l'API Google OAuth2**
+3. **Créer des identifiants OAuth 2.0** :
+   - Type d'application : Application Web
+   - URI de redirection autorisées :
+     - `http://localhost:8001/auth/google/callback` (développement)
+     - `https://backend-meeting.onrender.com/auth/google/callback` (production)
+
+### Gestion des erreurs OAuth
+
+| Code d'erreur | Description | Action recommandée |
+|---------------|-------------|-------------------|
+| `invalid_state` | État OAuth invalide ou expiré | Recommencer le processus |
+| `missing_params` | Paramètres code ou state manquants | Vérifier la configuration Google |
+| `token_exchange_failed` | Échec de l'échange code → token | Vérifier les credentials Google |
+| `user_info_failed` | Impossible de récupérer les infos utilisateur | Vérifier les permissions OAuth |
+| `email_already_exists` | Email déjà utilisé avec un compte classique | Proposer la connexion classique |
+| `email_exists_other_provider` | Email utilisé avec un autre provider OAuth | Informer l'utilisateur |
+| `server_error` | Erreur interne du serveur | Réessayer plus tard |
+
+### Sécurité implémentée
+
+- ✅ **Protection CSRF** : États OAuth uniques et temporaires (5 minutes)
+- ✅ **Usage unique** : Chaque état ne peut être utilisé qu'une seule fois
+- ✅ **Validation serveur** : Toute la logique de validation côté backend
+- ✅ **Gestion des conflits** : Détection des emails déjà existants
+- ✅ **Logging complet** : Traçabilité des authentifications
+- ✅ **Nettoyage automatique** : Suppression des états expirés
+
+### Test de l'authentification Google
+
+Pour tester l'implémentation :
+
+```bash
+# 1. Démarrer le serveur
+uvicorn app.main:app --reload --port 8001
+
+# 2. Ouvrir dans un navigateur
+http://localhost:8001/auth/google
+
+# 3. Suivre le processus d'authentification Google
+
+# 4. Vérifier la redirection avec le token
+```
+
+Ou utiliser le script de test automatisé :
+
+```bash
+python test_google_oauth.py
 ```
 
 ## Gestion des réunions - Endpoints simplifiés
@@ -627,6 +808,60 @@ Content-Type: application/json
 ```
 
 ### Télécharger une photo de profil
+
+```
+POST /profile/upload-picture
+```
+
+**En-têtes :**
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: multipart/form-data
+```
+
+**Corps de la requête (form-data) :**
+- `file`: Image de profil (formats acceptés : JPG, PNG)
+
+**Réponse :**
+```json
+{
+  "id": "99dfd97f-a65a-4881-b917-318254285727",
+  "email": "utilisateur@example.com",
+  "full_name": "Nom Complet",
+  "created_at": "2025-05-19T16:05:57.744623",
+  "profile_picture_url": "/uploads/profile/99dfd97f-a65a-4881-b917-318254285727/profile.jpg",
+  "success": true
+}
+```
+
+### Changer le mot de passe
+
+```
+PUT /profile/change-password
+```
+
+**En-têtes :**
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+```
+
+**Corps de la requête :**
+```json
+{
+  "current_password": "motdepasse123",
+  "new_password": "nouveaumotdepasse456"
+}
+```
+
+**Réponse :**
+```json
+{
+  "message": "Mot de passe modifié avec succès",
+  "success": true
+}
+```
+
 ## Gestion des clients et résumés personnalisés
 
 Cette API permet de gérer des clients avec des templates de résumé personnalisés. Les réunions peuvent être associées à des clients spécifiques pour générer des comptes rendus personnalisés selon le format désiré par chaque client.
@@ -798,59 +1033,6 @@ Ci-dessous le résumé de la réunion :
 {transcript_text}
 ```
 
-```
-POST /profile/upload-picture
-```
-
-**En-têtes :**
-```
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-Content-Type: multipart/form-data
-```
-
-**Corps de la requête (form-data) :**
-- `file`: Image de profil (formats acceptés : JPG, PNG)
-
-**Réponse :**
-```json
-{
-  "id": "99dfd97f-a65a-4881-b917-318254285727",
-  "email": "utilisateur@example.com",
-  "full_name": "Nom Complet",
-  "created_at": "2025-05-19T16:05:57.744623",
-  "profile_picture_url": "/uploads/profile/99dfd97f-a65a-4881-b917-318254285727/profile.jpg",
-  "success": true
-}
-```
-
-### Changer le mot de passe
-
-```
-PUT /profile/change-password
-```
-
-**En-têtes :**
-```
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-Content-Type: application/json
-```
-
-**Corps de la requête :**
-```json
-{
-  "current_password": "motdepasse123",
-  "new_password": "nouveaumotdepasse456"
-}
-```
-
-**Réponse :**
-```json
-{
-  "message": "Mot de passe modifié avec succès",
-  "success": true
-}
-```
-
 ## Exemples d'utilisation
 
 ### Exemple 1: Authentification et upload d'un fichier audio
@@ -1005,8 +1187,7 @@ def main():
         print()
         time.sleep(10)
     
-    print("
-Fin du test")
+    print("Fin du test")
 
 if __name__ == "__main__":
     main()
